@@ -49,8 +49,9 @@ export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
           <h2 className="text-4xl md:text-5xl font-bold tracking-tighter text-white">
             Final Step
           </h2>
-          <p className="text-gray-400 text-sm">
-            Enter your details to unlock your Forensic Brand Audit.
+          <p className="text-zinc-400 text-sm max-w-xs mx-auto leading-relaxed">
+            Enter your details below to unlock the audit. <br />
+            <span className="text-white font-medium">The full forensic report will be sent directly to your email.</span>
           </p>
         </div>
 
@@ -149,7 +150,7 @@ export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
               {isSubmitting ? "Generating Report..." : "Get My Score"}
             </Button>
             <p className="mt-4 text-center text-[10px] text-zinc-600">
-              Your report will be emailed to you instantly.
+              Please ensure your email is correct to receive the report.
             </p>
           </div>
         </form>

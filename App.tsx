@@ -8,7 +8,8 @@ import { LeadFormStep } from './components/LeadFormStep';
 import { DashboardStep } from './components/DashboardStep';
 import { performBrandAudit } from './services/geminiService';
 import { submitLead } from './services/crmService';
-import { saveToSupabase } from './services/supabaseService';
+import { saveToSupabase, getAuditById } from './services/supabaseService';
+import { generateMagicLink } from './services/utils';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.LANDING);
@@ -16,36 +17,48 @@ const App: React.FC = () => {
   const [quizResponses, setQuizResponses] = useState<UserResponse[]>([]);
   const [leadInfo, setLeadInfo] = useState<LeadInfo | null>(null);
   const [auditResult, setAuditResult] = useState<AuditResult | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
 
-  // Check for Magic Link on Mount
+  // Check for ID-based Link (Supabase) OR Legacy Magic Link on Mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const reportData = params.get('r');
+    const fetchReport = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const reportId = params.get('id'); // New Short URL format
+      const legacyData = params.get('r'); // Old Base64 format
 
-    if (reportData) {
-      try {
-        const jsonString = decodeURIComponent(escape(atob(reportData)));
-        const parsed = JSON.parse(jsonString);
-        
-        if (parsed.brand && parsed.result) {
-          setBrandData(parsed.brand);
-          setAuditResult(parsed.result);
-          // Pre-fill dummy lead info if accessing via link, or leave null
-          setLeadInfo({ 
-             firstName: 'Visitor', 
-             lastName: '', 
-             position: 'Guest', 
-             email: '', 
-             phone: '',
-             fullName: 'Visitor'
-          }); 
+      if (reportId) {
+        setStep(AppStep.ANALYZING);
+        setLoadingMessage("Retrieving Secure Report...");
+        const data = await getAuditById(reportId);
+        if (data) {
+          setBrandData(data.brand);
+          setAuditResult(data.result);
+          setLeadInfo(data.lead);
           setStep(AppStep.DASHBOARD);
+        } else {
+          // Fallback or error
+          setStep(AppStep.LANDING);
         }
-      } catch (e) {
-        console.error("Failed to parse report link", e);
-        window.history.replaceState(null, '', window.location.pathname);
+      } else if (legacyData) {
+        // ... (Legacy handling code) ...
+        try {
+          const jsonString = decodeURIComponent(escape(atob(legacyData)));
+          const parsed = JSON.parse(jsonString);
+          if (parsed.brand && parsed.result) {
+            setBrandData(parsed.brand);
+            setAuditResult(parsed.result);
+            setLeadInfo({ 
+               firstName: 'Visitor', lastName: '', position: 'Guest', email: '', phone: '', fullName: 'Visitor'
+            }); 
+            setStep(AppStep.DASHBOARD);
+          }
+        } catch (e) {
+          console.error("Failed to parse legacy link", e);
+        }
       }
-    }
+    };
+
+    fetchReport();
   }, []);
 
   // --- ANALYSIS EFFECT ---
@@ -54,10 +67,16 @@ const App: React.FC = () => {
 
     const runAudit = async () => {
       if (!brandData || !leadInfo) {
-        console.error("Missing data for audit");
-        setStep(AppStep.INPUT);
+        // Prevent running if we just loaded dashboard from ID
+        if (step === AppStep.ANALYZING && !auditResult) {
+            console.error("Missing data for audit");
+            setStep(AppStep.INPUT);
+        }
         return;
       }
+
+      // If we already have a result (e.g. from ID load), don't re-run
+      if (auditResult) return;
 
       try {
         console.log("Starting Audit...");
@@ -67,16 +86,18 @@ const App: React.FC = () => {
         if (isMounted) {
           setAuditResult(result);
           
-          // 2. Submit Lead + Result to CRM and Supabase
-          console.log("Submitting to CRM & DB...");
+          // 2. Save to Supabase FIRST to get the Short URL ID
+          console.log("Saving to DB...");
+          const shortUrl = await saveToSupabase(brandData, leadInfo, result, quizResponses);
           
-          // Run in parallel for speed
-          await Promise.all([
-            submitLead(leadInfo, brandData, result, quizResponses),
-            saveToSupabase(brandData, leadInfo, result, quizResponses)
-          ]);
+          // Fallback to legacy magic link if Supabase fails
+          const finalLink = shortUrl || generateMagicLink(brandData, result);
           
-          // 3. Show Dashboard
+          // 3. Submit Lead to CRM with the Short URL
+          console.log("Submitting to CRM...");
+          await submitLead(leadInfo, brandData, result, quizResponses, finalLink);
+          
+          // 4. Show Dashboard
           setStep(AppStep.DASHBOARD);
         }
       } catch (e) {
@@ -85,12 +106,12 @@ const App: React.FC = () => {
       }
     };
 
-    if (step === AppStep.ANALYZING) {
+    if (step === AppStep.ANALYZING && !auditResult) { // Only run if no result yet
       runAudit();
     }
 
     return () => { isMounted = false; };
-  }, [step, brandData, leadInfo, quizResponses]);
+  }, [step, brandData, leadInfo, quizResponses, auditResult]);
 
   // --- HANDLERS ---
 
@@ -141,7 +162,7 @@ const App: React.FC = () => {
         {step === AppStep.INPUT && <InputStep onNext={handleInputComplete} />}
         {step === AppStep.QUIZ && <QuizStep onComplete={handleQuizComplete} />}
         {step === AppStep.LEAD_FORM && <LeadFormStep onComplete={handleLeadFormComplete} />}
-        {step === AppStep.ANALYZING && <LoadingStep />}
+        {step === AppStep.ANALYZING && <LoadingStep customMessage={loadingMessage} />}
         {step === AppStep.DASHBOARD && auditResult && brandData && (
           <DashboardStep 
             result={auditResult} 
