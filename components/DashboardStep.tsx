@@ -13,7 +13,7 @@ interface DashboardStepProps {
 // Helper to parse **bold** text from AI response
 const formatText = (text: string) => {
   if (!text) return null;
-  const parts = text.split(/(\*\*.*?\*\*)/g);
+  const parts = text.split(/(\*\*[\s\S]+?\*\*)/g); // Modified regex to capture multiline bold text
   return parts.map((part, index) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={index} className="text-white font-bold">{part.slice(2, -2)}</strong>;
@@ -248,7 +248,7 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
                           {formatText(cat.strategy)}
                         </p>
                         <div className="pt-4 mt-auto no-print">
-                          {cat.score < 100 ? (
+                          {cat.score < 100 && (
                             <button 
                               onClick={scrollToCTA}
                               className="group flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider hover:text-zinc-300 transition-colors"
@@ -256,11 +256,6 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
                               Fix This Now
                               <span className="group-hover:translate-x-1 transition-transform">&rarr;</span>
                             </button>
-                          ) : (
-                            <div className="flex items-center gap-2 text-xs font-bold text-green-500 uppercase tracking-wider opacity-60">
-                              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                              Optimized
-                            </div>
                           )}
                         </div>
                      </div>
