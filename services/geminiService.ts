@@ -172,6 +172,7 @@ export const performBrandAudit = async (
     - **Specific Advice**: Do NOT give generic advice (e.g., "Improve SEO"). Give specific advice for their industry (e.g., "As a consulting firm, you need case studies on your homepage").
     - **Zero Presence Handling**: If the brand is new or not indexed, classify them as "Early Stage / Stealth". Do NOT say "Zero presence found". Instead, analyze their *readiness* based on their questionnaire answers and tech stack. 
     - **Vagueness Ban**: Avoid phrases like "Ensure you have a plan." Say "Create a 3-month roadmap."
+    - **MANDATORY**: You MUST output exactly 6 categories in the 'categories' array: Strategy, Operations, Visuals, Content, Growth, SEO.
 
     **OUTPUT FORMAT (JSON ONLY):**
     {
@@ -182,7 +183,7 @@ export const performBrandAudit = async (
       "categories": [
         // MUST INCLUDE ALL 6: Strategy, Visuals, Growth, Content, Operations, SEO
         {
-          "title": "Category Name",
+          "title": "Strategy" | "Visuals" | "Growth" | "Content" | "Operations" | "SEO",
           "score": [Integer 0-100],
           "diagnostic": "Specific observation about this category.",
           "evidence": ["Specific Fact 1 (e.g. 'No FB Pixel')", "Specific Fact 2"],

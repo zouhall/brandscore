@@ -4,11 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zouhall Brand Score</title>
-    <!-- We keep the Tailwind CDN for now to preserve your custom config without needing a complex migration -->
+    <!-- Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Fonts: Inter with Optical Sizing for "Display" effect -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap" rel="stylesheet">
+    
     <script>
       tailwind.config = {
         theme: {
@@ -36,8 +39,16 @@
         background-color: #050505;
         color: #F5F5F5;
         -webkit-font-smoothing: antialiased;
+        font-family: 'Inter', sans-serif;
+        font-optical-sizing: auto; /* Vital for "Display" look */
       }
-      /* Custom scrollbar for raw feel */
+      
+      /* Typography Tweaks for Zouhall Vibe */
+      h1, h2, h3, h4, h5, h6 {
+        letter-spacing: -0.03em; /* Tight tracking for bold headers */
+      }
+      
+      /* Custom scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -46,12 +57,13 @@
       }
       ::-webkit-scrollbar-thumb {
         background: #333;
+        border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #555;
       }
 
-      /* PRINT STYLES */
+      /* Print Styles */
       @media print {
         body {
           background-color: #fff !important;
@@ -62,10 +74,9 @@
         .no-print {
           display: none !important;
         }
-        /* Ensure background colors in charts/bars show up */
         * {
-          -webkit-print-color-adjust: exact !important;   /* Chrome, Safari, Edge */
-          print-color-adjust: exact !important;          /* Firefox */
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
         }
       }
     </style>
