@@ -1,9 +1,36 @@
 import { AuditResult, BrandInfo, LeadInfo, UserResponse } from "../types";
 import { QUESTIONS } from "../constants";
 
-// This URL will eventually be your Vercel Serverless Function or Zapier Webhook URL
-// For now, we simulate the delay.
+// Get the webhook URL from environment variables
 const SUBMISSION_ENDPOINT = process.env.REACT_APP_WEBHOOK_URL || "";
+
+/**
+ * Generates a sharable link by encoding the result in the URL.
+ * NOTE: URLs have length limits. We strip 'debugLog' to save space.
+ */
+function generateMagicLink(brand: BrandInfo, result: AuditResult): string {
+  try {
+    const minifiedResult = {
+      ...result,
+      debugLog: undefined, // Strip debug info to save space
+    };
+    
+    // Create a payload that includes brand info so we can restore everything
+    const restorePayload = {
+      brand: brand,
+      result: minifiedResult
+    };
+
+    const jsonString = JSON.stringify(restorePayload);
+    const base64String = btoa(unescape(encodeURIComponent(jsonString))); // Robust utf-8 base64
+    
+    const baseUrl = window.location.origin + window.location.pathname;
+    return `${baseUrl}?r=${base64String}`;
+  } catch (e) {
+    console.warn("Failed to generate magic link", e);
+    return window.location.href;
+  }
+}
 
 export const submitLead = async (
   lead: LeadInfo,
@@ -12,22 +39,21 @@ export const submitLead = async (
   responses: UserResponse[]
 ): Promise<boolean> => {
   
-  // Format the raw answers into a readable structure for the database/CRM
+  // Format the raw answers
   const formattedQuizData = responses.map(r => {
     const q = QUESTIONS.find(q => q.id === r.questionId);
     let answerText = r.answer.toString();
-    
-    // Convert boolean 0/1 to No/Yes for readability
     if (q?.type === 'boolean') {
       answerText = r.answer === 1 ? "Yes" : "No";
     }
-
     return {
       category: q?.category || "Unknown",
       question: q?.text || `Question ${r.questionId}`,
       answer: answerText
     };
   });
+
+  const magicLink = generateMagicLink(brand, result);
 
   const payload = {
     capturedAt: new Date().toISOString(),
@@ -46,31 +72,32 @@ export const submitLead = async (
       growth: result.categories.find(c => c.title === 'Growth')?.score || 0,
       visuals: result.categories.find(c => c.title === 'Visuals')?.score || 0,
     },
-    quiz_data: formattedQuizData, // <--- New Field with full answers
-    summary: result.executiveSummary
+    report_link: magicLink, // <--- Sent to Zapier to include in email
+    summary: result.executiveSummary,
+    quiz_data: formattedQuizData
   };
 
   try {
-    console.log("Submitting Payload to Backend:", payload);
+    console.log("Submitting Payload to Webhook...");
 
-    // --- PRODUCTION IMPLEMENTATION ---
-    // Uncomment this when you deploy to Vercel
-    /*
-    const response = await fetch('/api/submit-lead', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    
-    if (!response.ok) throw new Error('Submission failed');
-    */
-
-    // --- SIMULATION FOR DEMO ---
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (SUBMISSION_ENDPOINT) {
+      // Use fetch with 'no-cors' if using a simple webhook that doesn't return CORS headers,
+      // BUT 'no-cors' prevents JSON bodies. Usually Zapier webhooks support CORS if configured,
+      // or we just assume it works. Standard 'POST' is best.
+      await fetch(SUBMISSION_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' }, // text/plain avoids CORS preflight issues with some webhooks
+        body: JSON.stringify(payload)
+      });
+    } else {
+      console.warn("No REACT_APP_WEBHOOK_URL configured. Submission skipped.");
+      // For demo purposes, log the link
+      console.log("Magic Link Generated:", magicLink);
+    }
     
     return true;
   } catch (error) {
     console.error("CRM Submission Error:", error);
-    return false;
+    return false; // Fail silently to user, but log it
   }
 };

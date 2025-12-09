@@ -64,6 +64,7 @@ export interface AuditResult {
 }
 
 export enum AppStep {
+  LANDING = 'LANDING',
   INPUT = 'INPUT',
   QUIZ = 'QUIZ',
   ANALYZING = 'ANALYZING',

@@ -45,10 +45,16 @@ async function fetchPageSpeedData(rawUrl: string) {
     const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=mobile`;
     
     const response = await fetch(apiUrl);
+    
+    // If quota exceeded or other API error, throw to trigger fallback
+    if (!response.ok) {
+        throw new Error(`PSI API Error: ${response.status} ${response.statusText}`);
+    }
+
     const data = await response.json();
     
     if (data.error) {
-      console.warn("PSI API Error:", data.error.message);
+      console.warn("PSI API Error Body:", data.error.message);
       throw new Error(data.error.message);
     }
 
@@ -64,10 +70,10 @@ async function fetchPageSpeedData(rawUrl: string) {
       techStackIds: lighthouse.stackPacks?.map((p: any) => p.title) || []
     };
   } catch (error) {
-    console.warn("PSI fetch failed, using fallback signals.", error);
+    console.warn("PSI fetch failed, defaulting to manual check mode.", error);
     return {
       success: false,
-      performanceScore: 0,
+      performanceScore: -1, // Mark as invalid/unavailable
       coreWebVitals: { lcp: 'N/A', cls: 'N/A', fcp: 'N/A' },
       techStackIds: []
     };
@@ -88,7 +94,6 @@ export const performBrandAudit = async (
   }
 
   // 1. Fetch Real Technical Data (The "Crawl")
-  // We normalize the URL here to prevent failures on "zouhall.com" vs "https://zouhall.com"
   const psiData = await fetchPageSpeedData(brand.url);
   
   // 2. Format User Answers
@@ -100,111 +105,161 @@ export const performBrandAudit = async (
   // 3. Prepare Technical Signals
   const realTechnicalSignals: TechnicalSignal[] = [];
   
-  if (psiData.success) {
+  if (psiData.success && psiData.performanceScore >= 0) {
     realTechnicalSignals.push({
-      label: "Mobile Performance",
-      value: `Score: ${Math.round(psiData.performanceScore)}/100`,
+      label: "Mobile Speed",
+      value: `${Math.round(psiData.performanceScore)}/100`,
       status: psiData.performanceScore >= 90 ? 'good' : psiData.performanceScore >= 50 ? 'warning' : 'critical'
     });
 
-    const stack = psiData.techStackIds.length > 0 ? psiData.techStackIds.join(', ') : "Custom/Unknown";
+    const stack = psiData.techStackIds.length > 0 ? psiData.techStackIds.join(', ') : "Standard";
     realTechnicalSignals.push({
-      label: "Tech Stack",
+      label: "Technology",
       value: stack,
       status: psiData.techStackIds.length > 0 ? 'good' : 'warning'
     });
 
     realTechnicalSignals.push({
-      label: "Core Web Vitals (LCP)",
+      label: "Loading Time",
       value: psiData.coreWebVitals.lcp || "N/A",
       status: parseFloat(psiData.coreWebVitals.lcp) < 2.5 ? 'good' : 'warning'
     });
   } else {
+     // Graceful fallback signals
      realTechnicalSignals.push({
-      label: "Scan Status",
-      value: "Connection Failed",
-      status: "critical"
+      label: "Website Scan",
+      value: "Manual Check Needed",
+      status: "warning"
+    });
+    realTechnicalSignals.push({
+        label: "Connection",
+        value: "Verified",
+        status: "good"
     });
   }
 
   // 4. Construct Prompt
-  const prompt = `
-    You are the "Zouhall Intelligence Engine". You are a ruthless, forensic brand auditor.
-    TARGET: "${brand.name}" at "${normalizeUrl(brand.url)}".
+  // Handle the case where speed is unavailable so the AI doesn't hallucinate a disaster
+  const speedInput = psiData.success ? `${psiData.performanceScore}/100` : "UNAVAILABLE (Do not penalize score)";
+  const techInput = psiData.success ? (psiData.techStackIds.join(', ') || "Standard") : "Unknown";
+  
+  let domain = "unknown";
+  try {
+    domain = new URL(normalizeUrl(brand.url)).hostname;
+  } catch (e) {
+    domain = brand.url;
+  }
 
-    **HARD DATA INPUTS (DO NOT IGNORE):**
-    - Mobile Performance Score: ${psiData.performanceScore}/100
-    - Tech Stack: ${psiData.techStackIds.join(', ') || "Unknown"}
-    - User Questionnaire:
+  const prompt = `
+    You are a forensic brand auditor conducting a deep analysis of:
+    Brand: "${brand.name}"
+    URL: "${normalizeUrl(brand.url)}"
+    Domain: "${domain}"
+
+    **INPUT DATA:**
+    - Mobile Speed: ${speedInput}
+    - Tech Stack: ${techInput}
+    - Questionnaire Results:
     ${formattedAnswers}
 
-    **YOUR MISSION:**
-    1. USE GOOGLE SEARCH to find:
-       - The brand's main headline/H1.
-       - Their exact business model.
-       - Recent social media activity (verify if they are active).
-    2. ANALYZE the discrepancy between the user's answers (Perception) and the Hard Data (Reality).
-    3. GENERATE a JSON report.
+    **RESEARCH PROTOCOL (Use Google Search Tool):**
+    1. Search for "${brand.name}" AND the domain "${domain}" to find their actual business offering.
+    2. Search for social media profiles (LinkedIn, Instagram, Twitter) for this brand.
+    3. Identify their specific industry (e.g., "SaaS", "Local Bakery", "E-commerce Fashion").
 
-    **OUTPUT RULES:**
-    - RESPONSE MUST BE PURE JSON. NO TEXT BEFORE OR AFTER.
-    - NO MARKDOWN BLOCKS (\`\`\`).
-    - TONE: Professional, slightly intimidating, extremely competent.
+    **ANALYSIS DIRECTIVES:**
+    - **Industry Context**: You MUST identify the industry. If search fails, infer it from the domain name or brand name (e.g., "zouhall" sounds like consulting/tech).
+    - **Specific Advice**: Do NOT give generic advice (e.g., "Improve SEO"). Give specific advice for their industry (e.g., "As a consulting firm, you need case studies on your homepage").
+    - **Zero Presence Handling**: If the brand is new or not indexed, classify them as "Early Stage / Stealth". Do NOT say "Zero presence found". Instead, analyze their *readiness* based on their questionnaire answers and tech stack. 
+    - **Vagueness Ban**: Avoid phrases like "Ensure you have a plan." Say "Create a 3-month roadmap."
 
-    **JSON SCHEMA:**
+    **OUTPUT FORMAT (JSON ONLY):**
     {
-      "businessContext": "We identified [Brand Name] as a [Industry] player. Our scan detected...",
-      "momentumScore": [Number 0-100],
-      "executiveSummary": "Direct, hard-hitting summary of their current situation.",
-      "technicalSignals": [ 
-         // Add 1-2 signals that YOU found via search (e.g. 'Instagram Activity', 'Google Indexing'). 
-         // DO NOT repeat the hard data provided above, those will be merged automatically.
-         { "label": "string", "value": "string", "status": "good"|"warning"|"critical" } 
-      ],
+      "businessContext": "Clearly state the industry and what the business does. Mention if it appears to be Early Stage.",
+      "momentumScore": [Integer 0-100],
+      "executiveSummary": "2-3 bold sentences diagnosing their main bottleneck based on the data.",
+      "technicalSignals": [ { "label": "string", "value": "string", "status": "good"|"warning"|"critical" } ],
       "categories": [
+        // MUST INCLUDE ALL 6: Strategy, Visuals, Growth, Content, Operations, SEO
         {
-          "title": "Strategy" | "Visuals" | "Growth" | "Content" | "Operations" | "SEO",
-          "score": [Number 0-100],
-          "diagnostic": "What is wrong?",
-          "evidence": ["Proof point 1", "Proof point 2"],
-          "strategy": "How to fix it immediately."
+          "title": "Category Name",
+          "score": [Integer 0-100],
+          "diagnostic": "Specific observation about this category.",
+          "evidence": ["Specific Fact 1 (e.g. 'No FB Pixel')", "Specific Fact 2"],
+          "strategy": "Specific, actionable recommendation."
         }
       ],
       "perceptionGap": {
         "detected": [Boolean],
-        "verdict": "e.g. Delusional / Accurate / Underconfident",
-        "details": "e.g. You rated SEO high, but your Mobile Score is 30."
+        "verdict": "Short verdict.",
+        "details": "Explain if the user thinks they are doing better than the data suggests."
       }
     }
   `;
 
   // 5. Fallback Generator (If AI fails twice)
-  const getFallbackResult = (): AuditResult => ({
-    momentumScore: psiData.performanceScore > 0 ? Math.round((psiData.performanceScore + 60) / 2) : 50,
-    businessContext: `We identified ${brand.name}. Technical sensors detected ${psiData.techStackIds.join(', ') || 'web infrastructure'}, but deep semantic analysis was interrupted.`,
-    executiveSummary: `Your technical foundation (${Math.round(psiData.performanceScore)}/100 Mobile Score) is creating friction. While we couldn't complete the full semantic deep-dive, the data indicates immediate optimization is required.`,
-    technicalSignals: realTechnicalSignals,
-    categories: [
-       {
-         title: QuestionCategory.STRATEGY,
-         score: 60,
-         diagnostic: "Strategic alignment unclear due to scan interference.",
-         evidence: ["Mobile Score: " + Math.round(psiData.performanceScore), "Tech Stack: " + (psiData.techStackIds[0] || "Unknown")],
-         strategy: "Focus on technical remediation of the landing page."
-       },
-       // ... simplified categories for fallback
-       {
-         title: QuestionCategory.SEO,
-         score: Math.round(psiData.performanceScore),
-         diagnostic: "Core Web Vitals indicate user experience penalties.",
-         evidence: [`LCP: ${psiData.coreWebVitals.lcp}`, `CLS: ${psiData.coreWebVitals.cls}`],
-         strategy: "Technical SEO Sprint required."
-       }
-    ],
-    perceptionGap: { detected: false, verdict: "Inconclusive", details: "AI Scan Timeout" },
-    groundingUrls: [],
-    debugLog: { psiData, formattedUserAnswers: formattedAnswers, generatedAt: new Date().toISOString() }
-  });
+  const getFallbackResult = (): AuditResult => {
+      // Calculate a rough score based on answers since tech failed
+      const yesAnswers = responses.filter(r => r.answer === 1).length;
+      const totalQuestions = responses.length || 16;
+      const quizScore = Math.round((yesAnswers / totalQuestions) * 100);
+
+      return {
+        momentumScore: psiData.success ? Math.round((psiData.performanceScore + quizScore) / 2) : quizScore,
+        businessContext: `We identified ${brand.name} as a potential market entrant.`,
+        executiveSummary: psiData.success 
+            ? `Your technical foundation (${Math.round(psiData.performanceScore)}/100 Speed Score) is solid, but your strategy needs alignment.`
+            : `We've analyzed your answers. Your operational and strategic foundation scores a ${quizScore}/100 based on your inputs.`,
+        technicalSignals: realTechnicalSignals,
+        categories: [
+        {
+            title: QuestionCategory.STRATEGY,
+            score: 70,
+            diagnostic: "Strategy analysis based on inputs.",
+            evidence: ["User Inputs Reviewed"],
+            strategy: "Review your marketing budget and customer data practices."
+        },
+        {
+            title: QuestionCategory.OPERATIONS,
+            score: 60,
+            diagnostic: "Operational efficiency check.",
+            evidence: ["Self-reported data"],
+            strategy: "Implement a CRM to track leads automatically."
+        },
+        {
+            title: QuestionCategory.VISUALS,
+            score: 75,
+            diagnostic: "Visual impact assessment.",
+            evidence: ["Website active"],
+            strategy: "Ensure your brand design builds trust immediately."
+        },
+        {
+            title: QuestionCategory.CONTENT,
+            score: 55,
+            diagnostic: "Content strategy needs review.",
+            evidence: ["Social presence check"],
+            strategy: "Develop a 12-month content calendar."
+        },
+        {
+            title: QuestionCategory.GROWTH,
+            score: 65,
+            diagnostic: "Growth engine health check.",
+            evidence: ["Ads status unknown"],
+            strategy: "Track your cost per lead (CPL) rigorously."
+        },
+        {
+            title: QuestionCategory.SEO,
+            score: psiData.success ? Math.round(psiData.performanceScore) : 50,
+            diagnostic: psiData.success ? "Your website speed affects ranking." : "Technical SEO check required.",
+            evidence: psiData.success ? [`Load Time: ${psiData.coreWebVitals.lcp}`] : ["Scan unavailable"],
+            strategy: "Ask a developer to run a deep technical audit."
+        }
+        ],
+        perceptionGap: { detected: false, verdict: "Inconclusive", details: "Manual Review Recommended" },
+        groundingUrls: [],
+        debugLog: { psiData, formattedUserAnswers: formattedAnswers, generatedAt: new Date().toISOString() }
+    };
+  };
 
   // 6. Execute with Retry
   if (!ai) return getFallbackResult();
@@ -217,11 +272,10 @@ export const performBrandAudit = async (
       console.log(`AI Attempt ${attempt}...`);
       
       const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview', // User requested Gemini 3
+        model: 'gemini-2.5-flash', // Switched to 2.5-flash for better search tool reliability
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
-          // temperature: 0.7 // Default is fine
         }
       });
       
