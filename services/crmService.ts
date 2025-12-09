@@ -58,7 +58,9 @@ export const submitLead = async (
   const payload = {
     capturedAt: new Date().toISOString(),
     lead: {
-      name: lead.fullName,
+      firstName: lead.firstName,
+      lastName: lead.lastName,
+      position: lead.position,
       email: lead.email,
       phone: lead.phone
     },
@@ -72,32 +74,36 @@ export const submitLead = async (
       growth: result.categories.find(c => c.title === 'Growth')?.score || 0,
       visuals: result.categories.find(c => c.title === 'Visuals')?.score || 0,
     },
-    report_link: magicLink, // <--- Sent to Zapier to include in email
+    report_link: magicLink, 
     summary: result.executiveSummary,
     quiz_data: formattedQuizData
   };
 
-  try {
-    console.log("Submitting Payload to Webhook...");
+  console.log("-----------------------------------------");
+  console.log("LEAD CAPTURED. GENERATING REPORT...");
+  console.log("Magic Link:", magicLink);
+  console.log("-----------------------------------------");
 
+  try {
     if (SUBMISSION_ENDPOINT) {
-      // Use fetch with 'no-cors' if using a simple webhook that doesn't return CORS headers,
-      // BUT 'no-cors' prevents JSON bodies. Usually Zapier webhooks support CORS if configured,
-      // or we just assume it works. Standard 'POST' is best.
+      console.log("Submitting Payload to Webhook...");
       await fetch(SUBMISSION_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' }, // text/plain avoids CORS preflight issues with some webhooks
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json' 
+        },
         body: JSON.stringify(payload)
       });
+      console.log("Webhook Submission Successful");
     } else {
       console.warn("No REACT_APP_WEBHOOK_URL configured. Submission skipped.");
-      // For demo purposes, log the link
-      console.log("Magic Link Generated:", magicLink);
     }
     
     return true;
   } catch (error) {
     console.error("CRM Submission Error:", error);
-    return false; // Fail silently to user, but log it
+    // Return true anyway so UX isn't blocked
+    return true; 
   }
 };

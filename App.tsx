@@ -8,6 +8,7 @@ import { LeadFormStep } from './components/LeadFormStep';
 import { DashboardStep } from './components/DashboardStep';
 import { performBrandAudit } from './services/geminiService';
 import { submitLead } from './services/crmService';
+import { saveToSupabase } from './services/supabaseService';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.LANDING);
@@ -30,16 +31,68 @@ const App: React.FC = () => {
           setBrandData(parsed.brand);
           setAuditResult(parsed.result);
           // Pre-fill dummy lead info if accessing via link, or leave null
-          setLeadInfo({ fullName: 'Visitor', email: '', phone: '' }); 
+          setLeadInfo({ 
+             firstName: 'Visitor', 
+             lastName: '', 
+             position: 'Guest', 
+             email: '', 
+             phone: '',
+             fullName: 'Visitor'
+          }); 
           setStep(AppStep.DASHBOARD);
         }
       } catch (e) {
         console.error("Failed to parse report link", e);
-        // Remove invalid param from URL cleanly
         window.history.replaceState(null, '', window.location.pathname);
       }
     }
   }, []);
+
+  // --- ANALYSIS EFFECT ---
+  useEffect(() => {
+    let isMounted = true;
+
+    const runAudit = async () => {
+      if (!brandData || !leadInfo) {
+        console.error("Missing data for audit");
+        setStep(AppStep.INPUT);
+        return;
+      }
+
+      try {
+        console.log("Starting Audit...");
+        // 1. Run AI Audit
+        const result = await performBrandAudit(brandData, quizResponses);
+        
+        if (isMounted) {
+          setAuditResult(result);
+          
+          // 2. Submit Lead + Result to CRM and Supabase
+          console.log("Submitting to CRM & DB...");
+          
+          // Run in parallel for speed
+          await Promise.all([
+            submitLead(leadInfo, brandData, result, quizResponses),
+            saveToSupabase(brandData, leadInfo, result, quizResponses)
+          ]);
+          
+          // 3. Show Dashboard
+          setStep(AppStep.DASHBOARD);
+        }
+      } catch (e) {
+        console.error("Audit workflow failed", e);
+        if (isMounted) setStep(AppStep.INPUT);
+      }
+    };
+
+    if (step === AppStep.ANALYZING) {
+      runAudit();
+    }
+
+    return () => { isMounted = false; };
+  }, [step, brandData, leadInfo, quizResponses]);
+
+  // --- HANDLERS ---
 
   const handleLandingStart = () => {
     setStep(AppStep.INPUT);
@@ -50,34 +103,14 @@ const App: React.FC = () => {
     setStep(AppStep.QUIZ);
   };
 
-  const handleQuizComplete = async (responses: UserResponse[]) => {
+  const handleQuizComplete = (responses: UserResponse[]) => {
     setQuizResponses(responses);
-    setStep(AppStep.ANALYZING);
-
-    if (!brandData) {
-      console.error("Critical: Brand data missing");
-      setStep(AppStep.INPUT);
-      return;
-    }
-
-    try {
-      const result = await performBrandAudit(brandData, responses);
-      setAuditResult(result);
-      setStep(AppStep.LEAD_FORM);
-    } catch (e) {
-      console.error("Audit process failed completely", e);
-      setStep(AppStep.INPUT);
-    }
+    setStep(AppStep.LEAD_FORM);
   };
 
-  const handleLeadFormComplete = async (info: LeadInfo) => {
+  const handleLeadFormComplete = (info: LeadInfo) => {
     setLeadInfo(info);
-    
-    if (brandData && auditResult) {
-      submitLead(info, brandData, auditResult, quizResponses).catch(err => console.error("Background submission failed", err));
-    }
-
-    setStep(AppStep.DASHBOARD);
+    setStep(AppStep.ANALYZING);
   };
 
   const handleRestart = () => {
@@ -86,13 +119,11 @@ const App: React.FC = () => {
     setLeadInfo(null);
     setAuditResult(null);
     setStep(AppStep.LANDING);
-    // Clean URL if we were on a magic link
     window.history.pushState(null, '', window.location.pathname);
   };
 
   return (
     <div className="min-h-screen bg-black text-white p-6 md:p-12 font-sans selection:bg-white selection:text-black">
-      {/* Navigation / Logo Area */}
       <nav className="fixed top-6 left-6 md:left-12 z-50 mix-blend-difference no-print">
         <a href="#" onClick={(e) => {e.preventDefault(); handleRestart();}} className="block">
           <div className="flex items-center">
@@ -109,8 +140,8 @@ const App: React.FC = () => {
         {step === AppStep.LANDING && <LandingStep onStart={handleLandingStart} />}
         {step === AppStep.INPUT && <InputStep onNext={handleInputComplete} />}
         {step === AppStep.QUIZ && <QuizStep onComplete={handleQuizComplete} />}
-        {step === AppStep.ANALYZING && <LoadingStep />}
         {step === AppStep.LEAD_FORM && <LeadFormStep onComplete={handleLeadFormComplete} />}
+        {step === AppStep.ANALYZING && <LoadingStep />}
         {step === AppStep.DASHBOARD && auditResult && brandData && (
           <DashboardStep 
             result={auditResult} 

@@ -1,119 +1,155 @@
 import React, { useState } from 'react';
 import { LeadInfo } from '../types';
 import { Button } from './Button';
-import { submitLead } from '../services/crmService';
-// We need to access the parent state in a real app, 
-// but for now we will pass the data handling down or mock it.
-// Ideally App.tsx passes the current result down, but strictly for this component:
 
 interface LeadFormStepProps {
   onComplete: (info: LeadInfo) => void;
 }
 
+const POSITIONS = [
+  "Owner / Founder",
+  "CEO / President",
+  "CMO / Marketing Director",
+  "Product Manager",
+  "Sales Director",
+  "Other"
+];
+
 export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [position, setPosition] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [buttonText, setButtonText] = useState("Reveal Results");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (fullName && email && phone) {
+    if (firstName && lastName && position && email && phone) {
       setIsSubmitting(true);
-      setButtonText("Securing Data...");
-
-      // Simulate the API call delay here for UX (in production this calls the service)
-      // The actual service call needs the 'result' and 'brand' which are in App.tsx.
-      // In this flow, we pass the info up to App.tsx, and App.tsx calls the service.
-      
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      onComplete({ fullName, email, phone });
+      onComplete({ 
+        firstName, 
+        lastName, 
+        position, 
+        email, 
+        phone,
+        fullName: `${firstName} ${lastName}` 
+      });
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] animate-fade-in px-4">
-      <div className="w-full max-w-md space-y-10">
+    <div className="flex flex-col items-center justify-center min-h-[60vh] animate-fade-in px-4 py-8">
+      <div className="w-full max-w-lg space-y-8">
         <div className="space-y-4 text-center">
           <div className="inline-block px-3 py-1 border border-white text-white bg-zinc-900 text-[10px] tracking-widest uppercase mb-4">
-            Analysis Complete
+            Analysis Ready
           </div>
           <h2 className="text-4xl md:text-5xl font-bold tracking-tighter text-white">
-            Unlock Your Score
+            Final Step
           </h2>
           <p className="text-gray-400 text-sm">
-            Enter your details below to reveal your Brand Momentum Score. <br/>
-            A full copy of the report will be emailed to you.
+            Enter your details to unlock your Forensic Brand Audit.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <div className="grid grid-cols-2 gap-6">
             <div className="group relative">
-              <label htmlFor="fullName" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
-                Full Name
+              <label htmlFor="firstName" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+                First Name
               </label>
               <input
-                id="fullName"
+                id="firstName"
                 type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="John Doe"
-                className="w-full bg-transparent border-b border-gray-800 py-4 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors disabled:opacity-50"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="Jane"
+                className="w-full bg-transparent border-b border-gray-800 py-3 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors"
                 required
                 disabled={isSubmitting}
               />
             </div>
-            
             <div className="group relative">
-              <label htmlFor="email" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
-                Email Address
+              <label htmlFor="lastName" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+                Last Name
               </label>
               <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="john@company.com"
-                className="w-full bg-transparent border-b border-gray-800 py-4 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors disabled:opacity-50"
-                required
-                disabled={isSubmitting}
-              />
-            </div>
-
-            <div className="group relative">
-              <label htmlFor="phone" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
-                Mobile Number
-              </label>
-              <input
-                id="phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+1 (555) 000-0000"
-                className="w-full bg-transparent border-b border-gray-800 py-4 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors disabled:opacity-50"
+                id="lastName"
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Doe"
+                className="w-full bg-transparent border-b border-gray-800 py-3 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors"
                 required
                 disabled={isSubmitting}
               />
             </div>
           </div>
 
-          <div className="pt-6">
-            <Button type="submit" fullWidth disabled={!fullName || !email || !phone || isSubmitting}>
-              {isSubmitting ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
-                  {buttonText}
-                </span>
-              ) : (
-                "Reveal Results"
-              )}
+          <div className="group relative">
+            <label htmlFor="position" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+              Position
+            </label>
+            <div className="relative">
+              <select
+                id="position"
+                value={position}
+                onChange={(e) => setPosition(e.target.value)}
+                className="w-full bg-black border-b border-gray-800 py-3 text-lg text-white appearance-none focus:outline-none focus:border-white transition-colors cursor-pointer"
+                required
+                disabled={isSubmitting}
+              >
+                <option value="" disabled className="text-zinc-700">Select your role</option>
+                {POSITIONS.map(pos => (
+                  <option key={pos} value={pos}>{pos}</option>
+                ))}
+              </select>
+              <div className="absolute right-0 top-4 pointer-events-none text-gray-500">
+                <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/></svg>
+              </div>
+            </div>
+          </div>
+            
+          <div className="group relative">
+            <label htmlFor="email" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+              Work Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="jane@company.com"
+              className="w-full bg-transparent border-b border-gray-800 py-3 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors"
+              required
+              disabled={isSubmitting}
+            />
+          </div>
+
+          <div className="group relative">
+            <label htmlFor="phone" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+              Mobile Number
+            </label>
+            <input
+              id="phone"
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+1 (555) 000-0000"
+              className="w-full bg-transparent border-b border-gray-800 py-3 text-lg text-white placeholder-zinc-800 focus:outline-none focus:border-white transition-colors"
+              required
+              disabled={isSubmitting}
+            />
+          </div>
+
+          <div className="pt-8">
+            <Button type="submit" fullWidth disabled={!firstName || !lastName || !position || !email || !phone || isSubmitting}>
+              {isSubmitting ? "Generating Report..." : "Get My Score"}
             </Button>
-            <p className="mt-4 text-center text-[10px] text-gray-600">
-              By continuing, you agree to receive your customized report via email.
+            <p className="mt-4 text-center text-[10px] text-zinc-600">
+              Your report will be emailed to you instantly.
             </p>
           </div>
         </form>

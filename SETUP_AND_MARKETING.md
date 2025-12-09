@@ -1,18 +1,57 @@
 # ZOUHALL BRAND SCORE: The "Killer" Funnel Setup
 
-This document contains the step-by-step instructions to connect your new Brand Score app to your CRM and Email tools, along with a high-impact marketing strategy.
+This document contains the step-by-step instructions to connect your new Brand Score app to your CRM, Database, and Crawling tools.
 
 ---
 
-## PART 1: TECHNICAL SETUP (Zapier, HubSpot, Resend)
+## PART 1: EXTERNAL SERVICES (Database & Crawling)
 
-Since this is a client-side application (React), we use a **Zapier Webhook** as the bridge to your backend tools.
+### 1.1 Supabase Setup (The Database)
+We use Supabase to store every lead and every generated report permanently.
+1.  Go to [Supabase](https://supabase.com) and create a **New Project**.
+2.  Go to the **SQL Editor** (left sidebar) and run this query to create the table:
+    ```sql
+    create table brand_audits (
+      id uuid default gen_random_uuid() primary key,
+      created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+      brand_name text,
+      brand_url text,
+      lead_first_name text,
+      lead_last_name text,
+      lead_email text,
+      lead_phone text,
+      lead_position text,
+      score integer,
+      report_data jsonb
+    );
+    ```
+3.  Go to **Project Settings > API**.
+4.  Copy the **Project URL** and the **anon (public) Key**.
+5.  Add these to your Vercel Environment Variables:
+    *   `VITE_SUPABASE_URL`: [Your Project URL]
+    *   `VITE_SUPABASE_ANON_KEY`: [Your Anon Key]
+
+### 1.2 Google PageSpeed Insights (The Crawler)
+We use the PSI API to technically crawl the site (measure speed, check LCP, detect tech stack).
+1.  Go to the [Google Cloud Console Credentials Page](https://console.cloud.google.com/apis/credentials).
+2.  Click **Create Credentials** -> **API Key**.
+3.  (Optional but Recommended) Restrict the key to only use the "PageSpeed Insights API".
+4.  Copy the API Key.
+5.  Add this to Vercel Environment Variables:
+    *   `VITE_PSI_API_KEY`: [Your API Key]
+
+---
+
+## PART 2: TECHNICAL SETUP (Zapier, HubSpot, Resend)
 
 ### Step 1: Deploy & Configure Environment
 1.  **Vercel**: Deploy this repository to Vercel.
-2.  **Environment Variables**: In Vercel Project Settings > Environment Variables, add:
-    *   `API_KEY`: Your Google Gemini API Key.
-    *   `REACT_APP_WEBHOOK_URL`: (You will get this in the next step).
+2.  **Environment Variables**: Ensure ALL these are set:
+    *   `API_KEY`: Gemini API Key.
+    *   `VITE_PSI_API_KEY`: PageSpeed Insights Key (from Part 1.2).
+    *   `VITE_SUPABASE_URL`: Supabase URL (from Part 1.1).
+    *   `VITE_SUPABASE_ANON_KEY`: Supabase Anon Key (from Part 1.1).
+    *   `REACT_APP_WEBHOOK_URL`: Zapier Webhook (from Step 2 below).
 
 ### Step 2: Create the Zapier Webhook
 1.  Log in to **Zapier**.
@@ -22,7 +61,7 @@ Since this is a client-side application (React), we use a **Zapier Webhook** as 
 5.  **PASTE THIS URL** into your Vercel Environment Variables as `REACT_APP_WEBHOOK_URL` and redeploy.
 6.  **Test It**: Go to your live website, fill out the Brand Score form, and submit.
 7.  Go back to Zapier and click **Test Trigger**. You should see a request containing:
-    *   `lead`: { name, email, phone }
+    *   `lead`: { firstName, lastName, email, phone, position }
     *   `scores`: { total, strategy, ... }
     *   `report_link`: (The Magic Link to view the report)
     *   `summary`: (The Executive Summary text)
@@ -32,8 +71,10 @@ Since this is a client-side application (React), we use a **Zapier Webhook** as 
 2.  Event: **Create or Update Contact**.
 3.  Map the fields:
     *   Email: `lead.email`
-    *   First Name: `lead.name` (split if needed)
+    *   First Name: `lead.firstName`
+    *   Last Name: `lead.lastName`
     *   Phone: `lead.phone`
+    *   Job Title: `lead.position`
     *   **Custom Properties**: Create properties in HubSpot for "Brand Score" and "Report Link".
     *   Map `scores.total` to "Brand Score".
     *   Map `report_link` to "Report Link".
@@ -47,7 +88,7 @@ Since this is a client-side application (React), we use a **Zapier Webhook** as 
 > **Subject:** Your Brand Score is Ready: [Mapped Score]/100
 >
 > **Body:**
-> Hi [Name],
+> Hi [First Name],
 >
 > We've analyzed [Brand Name]. Your momentum score is **[Score]**.
 >
@@ -64,7 +105,7 @@ Since this is a client-side application (React), we use a **Zapier Webhook** as 
 
 ---
 
-## PART 2: THE "KILLER" FUNNEL STRATEGY
+## PART 3: THE "KILLER" FUNNEL STRATEGY
 
 **Goal:** Position the Brand Score not as a "quiz" but as a **Forensic Audit**.
 

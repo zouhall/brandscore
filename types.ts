@@ -25,9 +25,12 @@ export interface BrandInfo {
 }
 
 export interface LeadInfo {
-  fullName: string;
+  firstName: string;
+  lastName: string;
+  position: string;
   email: string;
   phone: string;
+  fullName?: string; // Derived for backward compatibility if needed
 }
 
 export interface TechnicalSignal {
