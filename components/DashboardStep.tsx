@@ -10,6 +10,18 @@ interface DashboardStepProps {
   onRestart: () => void;
 }
 
+// Helper to parse **bold** text from AI response
+const formatText = (text: string) => {
+  if (!text) return null;
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="text-white font-bold">{part.slice(2, -2)}</strong>;
+    }
+    return <span key={index}>{part}</span>;
+  });
+};
+
 const SignalBadge: React.FC<{ signal: TechnicalSignal }> = ({ signal }) => {
   const colors = {
     good: "text-white border-white bg-zinc-900/30 print:text-black print:border-black",
@@ -137,8 +149,9 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
                </div>
             )}
 
+            {/* Formatted Text rendering */}
             <p className="text-lg text-zinc-300 leading-relaxed font-light mb-6 print:text-black">
-              {result.executiveSummary}
+              {formatText(result.executiveSummary)}
             </p>
 
             {result.perceptionGap.detected && (
@@ -195,7 +208,7 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
                     <div>
                       <h3 className="text-2xl font-bold text-white mb-2 print:text-black">{cat.title}</h3>
                       <div className={`text-4xl font-bold mb-1 tracking-tighter ${getScoreColor(cat.score)}`}>
-                        {cat.score}
+                        {cat.score}<span className="text-2xl text-zinc-600 ml-1">%</span>
                       </div>
                     </div>
                     {/* Progress Bar */}
@@ -213,7 +226,7 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
                      <div className="space-y-4">
                        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest print:text-gray-600">Issue</h4>
                        <p className="text-sm text-zinc-400 leading-relaxed font-medium print:text-black">
-                         {cat.diagnostic}
+                         {formatText(cat.diagnostic)}
                        </p>
                        <div className="bg-zinc-900/30 p-4 rounded-lg border border-zinc-800/50 print:bg-gray-50 print:border-gray-300">
                           <p className="text-[10px] text-zinc-600 uppercase tracking-widest mb-3">Evidence Found</p>
@@ -232,16 +245,23 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
                      <div className="space-y-4 flex flex-col h-full">
                         <h4 className="text-xs font-bold text-white uppercase tracking-widest print:text-black">Solution</h4>
                         <p className="text-sm text-zinc-200 leading-relaxed font-medium flex-grow print:text-black">
-                          {cat.strategy}
+                          {formatText(cat.strategy)}
                         </p>
                         <div className="pt-4 mt-auto no-print">
-                          <button 
-                            onClick={scrollToCTA}
-                            className="group flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider hover:text-zinc-300 transition-colors"
-                          >
-                            Fix This Now
-                            <span className="group-hover:translate-x-1 transition-transform">&rarr;</span>
-                          </button>
+                          {cat.score < 100 ? (
+                            <button 
+                              onClick={scrollToCTA}
+                              className="group flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider hover:text-zinc-300 transition-colors"
+                            >
+                              Fix This Now
+                              <span className="group-hover:translate-x-1 transition-transform">&rarr;</span>
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-2 text-xs font-bold text-green-500 uppercase tracking-wider opacity-60">
+                              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                              Optimized
+                            </div>
+                          )}
                         </div>
                      </div>
                   </div>
