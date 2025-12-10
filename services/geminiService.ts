@@ -154,12 +154,19 @@ export const performBrandAudit = async (
   }
 
   const prompt = `
-    You are a forensic brand auditor. You MUST verify the actual business activity of the brand using Google Search.
+    You are a forensic brand auditor. You must analyze the brand "${brand.name}" located at the specific domain "${domain}".
     
-    **TARGET SUBJECT:**
-    Brand Name: "${brand.name}"
-    URL: "${normalizeUrl(brand.url)}"
-    Domain: "${domain}"
+    **CRITICAL DISAMBIGUATION PROTOCOL:**
+    1. The brand name might be generic (e.g., "Old Fashioned Club"). There may be many companies with this name.
+    2. You MUST IGNORE any entity that does not reside at "${domain}".
+    3. **EXECUTE A SEARCH** for "site:${domain}" to read the meta titles and descriptions of the actual pages on this site.
+    4. Based ONLY on the "site:${domain}" results, determine the industry (e.g. Fashion, SaaS, Cocktails).
+    5. If "site:${domain}" yields no clear results, search for "${domain}" (in quotes) to find social profiles linked to this specific URL.
+
+    **SCORING & TONE:**
+    - Tone: Professional, direct, "tough love". No fluff.
+    - If the user answered "No" to critical questions (like marketing spend), be harsh in the strategy section.
+    - If the site speed is low (${speedInput}), emphasize that they are losing traffic.
 
     **INPUT DATA:**
     - Mobile Speed: ${speedInput}
@@ -167,23 +174,11 @@ export const performBrandAudit = async (
     - Questionnaire Results:
     ${formattedAnswers}
 
-    **STRICT SEARCH PROTOCOL (MANDATORY):**
-    1. USE THE GOOGLE SEARCH TOOL. Search for the exact domain "${domain}".
-    2. LOOK at the search results (Title and Snippet) to determine what they actually sell.
-    3. IF the domain is a fashion store (e.g., "Old Fashioned Club"), DO NOT hallucinate that it is a cocktail subscription. Trust the website content over the name.
-    4. If the website appears down or unrelated, search for "${brand.name} ${domain}" to find social profiles.
-
-    **ANALYSIS DIRECTIVES:**
-    - **Industry Context**: State the industry clearly based *only* on the search results.
-    - **No Hallucinations**: If you cannot confirm the industry from search, state "Industry could not be verified" rather than guessing.
-    - **Scoring**: Be harsh but fair. High speed score is good. Low marketing spend is bad.
-    - **MANDATORY**: Output exactly 6 categories: Strategy, Operations, Visuals, Content, Growth, SEO.
-
     **OUTPUT FORMAT (JSON ONLY):**
     {
-      "businessContext": "Clearly state the industry and activity found via search.",
+      "businessContext": "Definitively state the industry found on ${domain}. Do NOT say 'could not be verified'. Make your best assessment from the search snippets.",
       "momentumScore": [Integer 0-100],
-      "executiveSummary": "2-3 bold sentences diagnosing their main bottleneck.",
+      "executiveSummary": "2-3 bold sentences diagnosing their main bottleneck. Use **bold** for emphasis.",
       "technicalSignals": [ { "label": "string", "value": "string", "status": "good"|"warning"|"critical" } ],
       "categories": [
         {
@@ -238,6 +233,7 @@ export const performBrandAudit = async (
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
+          temperature: 0.4, // Lower temperature for more factual/grounded responses
         }
       });
       

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { AuditResult, BrandInfo, LeadInfo } from '../types';
+import { AuditResult, BrandInfo, LeadInfo, UserResponse } from '../types';
+import { prepareCrmData } from './crmService';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
@@ -16,7 +17,7 @@ export const saveToSupabase = async (
   brand: BrandInfo,
   lead: LeadInfo,
   result: AuditResult,
-  quizResponses: any[]
+  quizResponses: UserResponse[]
 ): Promise<string | null> => {
   if (!supabase) {
     console.warn("Supabase not configured. Skipping database save.");
@@ -36,14 +37,14 @@ export const saveToSupabase = async (
           lead_email: lead.email,
           lead_phone: lead.phone,
           lead_position: lead.position,
+          lead_revenue: lead.revenue,          // Mapped
+          lead_company_size: lead.companySize, // Mapped
           score: result.momentumScore,
+          // Initial report data, will be enriched in step 3
           report_data: {
             result,
             quizResponses,
-            meta: {
-              source: 'web_app',
-              version: '1.0'
-            }
+            meta: { source: 'web_app', version: '1.0' }
           }
         }
       ])
@@ -60,14 +61,26 @@ export const saveToSupabase = async (
     const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
     const shortUrl = `${origin}${pathname}?id=${data.id}`;
 
-    // 3. Update the record with the generated URL (as requested for separate column)
+    // 3. Generate CRM Data (Email HTML, etc)
+    const crmData = prepareCrmData(lead, brand, result, quizResponses, shortUrl);
+
+    // 4. Update the record with URL and the enriched CRM data
+    // We update 'report_data' to include the 'crm' field so Zapier can read it easily.
     const { error: updateError } = await supabase
       .from('brand_audits')
-      .update({ report_url: shortUrl })
+      .update({ 
+        report_url: shortUrl,
+        report_data: {
+            result,
+            quizResponses,
+            crm: crmData, // <--- This is what Zapier will read
+            meta: { source: 'web_app', version: '1.0' }
+        }
+      })
       .eq('id', data.id);
 
     if (updateError) {
-      console.warn("Failed to update report_url column:", updateError);
+      console.warn("Failed to update report_url/crm data:", updateError);
     }
 
     console.log("Saved to Supabase with ID:", data.id);
@@ -104,6 +117,8 @@ export const getAuditById = async (id: string) => {
         firstName: data.lead_first_name,
         lastName: data.lead_last_name,
         position: data.lead_position,
+        revenue: data.lead_revenue || "",          // Retrieve
+        companySize: data.lead_company_size || "", // Retrieve
         email: data.lead_email,
         phone: data.lead_phone,
         fullName: `${data.lead_first_name} ${data.lead_last_name}`

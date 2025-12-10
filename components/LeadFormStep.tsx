@@ -15,10 +15,30 @@ const POSITIONS = [
   "Other"
 ];
 
+const REVENUE_RANGES = [
+  "Pre-Revenue",
+  "$0 - $100k",
+  "$100k - $500k",
+  "$500k - $1M",
+  "$1M - $5M",
+  "$5M - $10M",
+  "$10M+"
+];
+
+const COMPANY_SIZES = [
+  "1-5 Employees",
+  "6-20 Employees",
+  "21-50 Employees",
+  "51-200 Employees",
+  "200+ Employees"
+];
+
 export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [position, setPosition] = useState('');
+  const [revenue, setRevenue] = useState('');
+  const [companySize, setCompanySize] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   
@@ -26,12 +46,14 @@ export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (firstName && lastName && position && email && phone) {
+    if (firstName && lastName && position && email && phone && revenue && companySize) {
       setIsSubmitting(true);
       onComplete({ 
         firstName, 
         lastName, 
         position, 
+        revenue,
+        companySize,
         email, 
         phone,
         fullName: `${firstName} ${lastName}` 
@@ -112,6 +134,56 @@ export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
               </div>
             </div>
           </div>
+
+          <div className="grid grid-cols-2 gap-6">
+            <div className="group relative">
+                <label htmlFor="revenue" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+                Annual Revenue
+                </label>
+                <div className="relative">
+                <select
+                    id="revenue"
+                    value={revenue}
+                    onChange={(e) => setRevenue(e.target.value)}
+                    className="w-full bg-black border-b border-gray-800 py-3 text-lg text-white appearance-none focus:outline-none focus:border-white transition-colors cursor-pointer"
+                    required
+                    disabled={isSubmitting}
+                >
+                    <option value="" disabled className="text-zinc-700">Select Revenue</option>
+                    {REVENUE_RANGES.map(range => (
+                    <option key={range} value={range}>{range}</option>
+                    ))}
+                </select>
+                <div className="absolute right-0 top-4 pointer-events-none text-gray-500">
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/></svg>
+                </div>
+                </div>
+            </div>
+
+            <div className="group relative">
+                <label htmlFor="companySize" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
+                Company Size
+                </label>
+                <div className="relative">
+                <select
+                    id="companySize"
+                    value={companySize}
+                    onChange={(e) => setCompanySize(e.target.value)}
+                    className="w-full bg-black border-b border-gray-800 py-3 text-lg text-white appearance-none focus:outline-none focus:border-white transition-colors cursor-pointer"
+                    required
+                    disabled={isSubmitting}
+                >
+                    <option value="" disabled className="text-zinc-700">Select Size</option>
+                    {COMPANY_SIZES.map(size => (
+                    <option key={size} value={size}>{size}</option>
+                    ))}
+                </select>
+                <div className="absolute right-0 top-4 pointer-events-none text-gray-500">
+                    <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/></svg>
+                </div>
+                </div>
+            </div>
+          </div>
             
           <div className="group relative">
             <label htmlFor="email" className="block text-xs uppercase tracking-widest text-gray-500 mb-2">
@@ -146,7 +218,7 @@ export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {
           </div>
 
           <div className="pt-8">
-            <Button type="submit" fullWidth disabled={!firstName || !lastName || !position || !email || !phone || isSubmitting}>
+            <Button type="submit" fullWidth disabled={!firstName || !lastName || !position || !revenue || !companySize || !email || !phone || isSubmitting}>
               {isSubmitting ? "Generating Report..." : "Get My Score"}
             </Button>
             <p className="mt-4 text-center text-[10px] text-zinc-600">

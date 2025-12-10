@@ -7,7 +7,6 @@ import { LoadingStep } from './components/LoadingStep';
 import { LeadFormStep } from './components/LeadFormStep';
 import { DashboardStep } from './components/DashboardStep';
 import { performBrandAudit } from './services/geminiService';
-import { submitLead } from './services/crmService';
 import { saveToSupabase, getAuditById } from './services/supabaseService';
 import { generateMagicLink } from './services/utils';
 
@@ -86,16 +85,9 @@ const App: React.FC = () => {
         if (isMounted) {
           setAuditResult(result);
           
-          // 2. Save to Supabase FIRST to get the Short URL ID
+          // 2. Save to Supabase (Includes CRM Data Generation)
           console.log("Saving to DB...");
-          const shortUrl = await saveToSupabase(brandData, leadInfo, result, quizResponses);
-          
-          // Fallback to legacy magic link if Supabase fails
-          const finalLink = shortUrl || generateMagicLink(brandData, result);
-          
-          // 3. Submit Lead to CRM with the Short URL
-          console.log("Submitting to CRM...");
-          await submitLead(leadInfo, brandData, result, quizResponses, finalLink);
+          await saveToSupabase(brandData, leadInfo, result, quizResponses);
           
           // 4. Show Dashboard
           setStep(AppStep.DASHBOARD);

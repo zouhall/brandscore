@@ -22,6 +22,7 @@ We use Supabase to store every lead and every generated report permanently.
       lead_phone text,
       lead_position text,
       score integer,
+      report_url text,
       report_data jsonb
     );
     ```
@@ -42,66 +43,43 @@ We use the PSI API to technically crawl the site (measure speed, check LCP, dete
 
 ---
 
-## PART 2: TECHNICAL SETUP (Zapier, HubSpot, Resend)
+## PART 2: AUTOMATION SETUP (Supabase Webhooks -> Zapier)
 
-### Step 1: Deploy & Configure Environment
-1.  **Vercel**: Deploy this repository to Vercel.
-2.  **Environment Variables**: Ensure ALL these are set:
-    *   `API_KEY`: Gemini API Key.
-    *   `VITE_PSI_API_KEY`: PageSpeed Insights Key (from Part 1.2).
-    *   `VITE_SUPABASE_URL`: Supabase URL (from Part 1.1).
-    *   `VITE_SUPABASE_ANON_KEY`: Supabase Anon Key (from Part 1.1).
-    *   `REACT_APP_WEBHOOK_URL`: Zapier Webhook (from Step 2 below).
+Since the native "Supabase" Zap is often unavailable or limited, we will use a **Database Webhook**. This forces Supabase to send data to Zapier immediately after a row is inserted.
 
-### Step 2: Create the Zapier Webhook
+### Step 1: Get the Zapier URL
 1.  Log in to **Zapier**.
-2.  Create a new Zap. Trigger: **Webhooks by Zapier**.
-3.  Event: **Catch Hook**.
-4.  Click Continue. Copy the **Webhook URL**.
-5.  **PASTE THIS URL** into your Vercel Environment Variables as `REACT_APP_WEBHOOK_URL` and redeploy.
-6.  **Test It**: Go to your live website, fill out the Brand Score form, and submit.
-7.  Go back to Zapier and click **Test Trigger**. You should see a request containing:
-    *   `lead`: { firstName, lastName, email, phone, position }
-    *   `scores`: { total, strategy, ... }
-    *   `report_link`: (The Magic Link to view the report)
-    *   `summary`: (The Executive Summary text)
+2.  Create a new Zap.
+3.  **Trigger App:** Search for **"Webhooks by Zapier"**.
+4.  **Trigger Event:** Select **"Catch Hook"**.
+5.  Click Continue until you see the **Webhook URL**.
+6.  **COPY THIS URL.**
 
-### Step 3: Connect HubSpot (CRM)
-1.  In the same Zap, add an Action: **HubSpot**.
-2.  Event: **Create or Update Contact**.
-3.  Map the fields:
-    *   Email: `lead.email`
-    *   First Name: `lead.firstName`
-    *   Last Name: `lead.lastName`
-    *   Phone: `lead.phone`
-    *   Job Title: `lead.position`
-    *   **Custom Properties**: Create properties in HubSpot for "Brand Score" and "Report Link".
-    *   Map `scores.total` to "Brand Score".
-    *   Map `report_link` to "Report Link".
+### Step 2: Configure Supabase Webhook
+1.  Go to your Supabase Project Dashboard.
+2.  In the left sidebar, click **Database**.
+3.  In the inner sidebar menu, click **Webhooks**.
+4.  Click **"Create a new webhook"**.
+5.  **Name:** `send-lead-to-zapier`
+6.  **Conditions:**
+    *   **Table:** `public.brand_audits`
+    *   **Events:** Check `INSERT`.
+7.  **Webhook Configuration:**
+    *   **Method:** `POST`
+    *   **URL:** Paste your Zapier Webhook URL here.
+    *   **HTTP Headers:** Click "Add new header".
+        *   Name: `Content-Type`
+        *   Value: `application/json`
+8.  Click **Create Webhook**.
 
-### Step 4: Connect Resend (Email Delivery)
-1.  In the same Zap, add an Action: **API Request (Beta)** OR use a dedicated "Send Email" integration if available.
-    *   *Recommendation*: If Zapier has a Resend integration, use it. If not, use "Custom Request" to call Resend API.
-    *   *Alternative*: Use HubSpot's "Marketing Email" workflow. If you added the contact to HubSpot in Step 3, you can trigger a HubSpot Workflow to send the email. This is better for tracking.
-
-**The Email Content (Template):**
-> **Subject:** Your Brand Score is Ready: [Mapped Score]/100
->
-> **Body:**
-> Hi [First Name],
->
-> We've analyzed [Brand Name]. Your momentum score is **[Score]**.
->
-> **Executive Summary:**
-> [Summary Text from Webhook]
->
-> **Access your full detailed report here:**
-> [Report Link]
->
-> To fix these issues, book your strategy call below.
-> [Link to Calendar]
->
-> - The Zouhall Team
+### Step 3: Test & Map Data
+1.  Go back to your specific app URL (localhost or Vercel) and run a full test audit. Submit the lead form.
+2.  Go to Zapier and click **"Test Trigger"**.
+3.  You should see a request labeled `Request A`.
+4.  Inside `record`, you will see all your columns.
+    *   **Tip:** The complex data (like email body) is inside the `report_data` column.
+    *   Zapier might see `report_data` as a text string or a nested object. If it's a string, add a **"Formatter by Zapier"** step -> **JSON** -> **Parse JSON** to break it apart.
+5.  **Finish the Zap:** Add your Email (Gmail/Outlook) or CRM (HubSpot/Salesforce) step using the data from the hook.
 
 ---
 
@@ -125,10 +103,5 @@ Don't say "Take a quiz". Say "Grade your business infrastructure."
 *   **Immediate**: Email with the Magic Link (proof of value).
 *   **24 Hours Later**: "One thing you missed." (Pick one generic weak point like SEO and send a value tip).
 *   **48 Hours Later**: "I was looking at your report..." (Subject line). "I noticed your Technical Score was low. I have an engineer who can fix this in 3 days. Want to chat?" -> Link to Cal.com.
-
-### 4. Estimated Results
-*   **Conversion Rate (Landing -> Lead):** High quality quizzes convert at **20-40%**. Standard landing pages convert at 2-5%.
-*   **Lead Cost:** Expect 50% lower CPL (Cost Per Lead) than "Book a Call" ads because you are giving immediate value (The Score).
-*   **Sales Conversion:** Leads who go through this process are "Problem Aware". They know they have a low score. Selling to them is easier because you aren't convincing them they have a problem; the *computer* already told them they do.
 
 **Go live. This is a weapon.**

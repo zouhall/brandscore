@@ -2,18 +2,16 @@ import { AuditResult, BrandInfo, LeadInfo, UserResponse } from "../types";
 import { QUESTIONS } from "../constants";
 import { generateEmailHtml, generateEmailSubject } from "./emailTemplates";
 
-// Get the webhook URL from environment variables
-const SUBMISSION_ENDPOINT = process.env.REACT_APP_WEBHOOK_URL || "";
-
-export const submitLead = async (
+// We no longer send from the client. This service now just formats data for the DB.
+export const prepareCrmData = (
   lead: LeadInfo,
   brand: BrandInfo,
   result: AuditResult,
   responses: UserResponse[],
   reportUrl: string 
-): Promise<boolean> => {
+) => {
   
-  // 1. Format the raw answers for the CRM (HubSpot/Airtable)
+  // 1. Format the raw answers for the CRM
   const formattedQuizData = responses.map(r => {
     const q = QUESTIONS.find(q => q.id === r.questionId);
     let answerText = r.answer.toString();
@@ -31,8 +29,8 @@ export const submitLead = async (
   const emailHtml = generateEmailHtml(lead, brand, result, reportUrl);
   const emailSubject = generateEmailSubject(brand, result);
 
-  // 3. Construct the Payload
-  const payload = {
+  // 3. Return the payload to be saved in Supabase
+  return {
     capturedAt: new Date().toISOString(),
     
     // Lead Data
@@ -41,6 +39,8 @@ export const submitLead = async (
       lastName: lead.lastName,
       fullName: lead.fullName,
       position: lead.position,
+      revenue: lead.revenue,           // Included for Zapier
+      companySize: lead.companySize,   // Included for Zapier
       email: lead.email,
       phone: lead.phone
     },
@@ -74,40 +74,4 @@ export const submitLead = async (
     
     quiz_data: formattedQuizData
   };
-
-  console.log("-----------------------------------------");
-  console.log("LEAD CAPTURED. PREPARING WEBHOOK...");
-  console.log(`Target URL Configured: ${SUBMISSION_ENDPOINT ? "YES" : "NO (Check .env)"}`);
-  console.log("-----------------------------------------");
-
-  if (!SUBMISSION_ENDPOINT) {
-    console.error("ERROR: REACT_APP_WEBHOOK_URL is missing. Data sent to Supabase but NOT Zapier.");
-    return true; // Return true so flow continues despite config error
-  }
-
-  try {
-    // mode: 'cors' ensures we attempt a standard cross-origin request
-    // keepalive: true helps the request survive if the page state updates rapidly
-    const response = await fetch(SUBMISSION_ENDPOINT, {
-      method: 'POST',
-      mode: 'cors', 
-      keepalive: true,
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json' 
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      console.warn(`Webhook responded with status: ${response.status} ${response.statusText}`);
-    } else {
-      console.log("Webhook Submission Successful");
-    }
-    
-    return true;
-  } catch (error) {
-    console.error("CRM Submission Network Error:", error);
-    return true; 
-  }
 };

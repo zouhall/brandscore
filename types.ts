@@ -30,6 +30,8 @@ export interface LeadInfo {
   position: string;
   email: string;
   phone: string;
+  revenue: string;      // New Field
+  companySize: string;  // New Field
   fullName?: string; // Derived for backward compatibility if needed
 }
 
