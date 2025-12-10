@@ -1,5 +1,6 @@
+
 import { createClient } from '@supabase/supabase-js';
-import { AuditResult, BrandInfo, LeadInfo, UserResponse } from '../types';
+import { AuditResult, BrandInfo, LeadInfo, UserResponse, TrafficSource } from '../types';
 import { prepareCrmData } from './crmService';
 import { generateUUID } from './utils';
 
@@ -18,7 +19,8 @@ export const saveToSupabase = async (
   brand: BrandInfo,
   lead: LeadInfo,
   result: AuditResult,
-  quizResponses: UserResponse[]
+  quizResponses: UserResponse[],
+  trafficSource: TrafficSource = {}
 ): Promise<string | null> => {
   if (!supabase) {
     console.warn("Supabase not configured. Skipping database save.");
@@ -27,8 +29,6 @@ export const saveToSupabase = async (
 
   try {
     // 1. Generate ID Client-Side
-    // We do this so we can construct the URL *before* inserting into the DB.
-    // This allows us to do a SINGLE insert, ensuring the Webhook gets all data immediately.
     const id = generateUUID();
 
     // 2. Construct the Short URL using the ID
@@ -39,7 +39,7 @@ export const saveToSupabase = async (
     // 3. Generate CRM Data (Email HTML, etc)
     const crmData = prepareCrmData(lead, brand, result, quizResponses, shortUrl);
 
-    // 4. Single Insert with ALL data
+    // 4. Single Insert with ALL data (including UTMs)
     const { error } = await supabase
       .from('brand_audits')
       .insert([
@@ -56,16 +56,25 @@ export const saveToSupabase = async (
           lead_company_size: lead.companySize,
           score: result.momentumScore,
           
-          // These columns are now populated immediately for Zapier
+          // CRM Data
           email_subject: crmData.email_config.subject,
           email_body: crmData.email_config.html_body,
           report_url: shortUrl,
+
+          // UTM / Traffic Source
+          utm_source: trafficSource.utm_source || null,
+          utm_medium: trafficSource.utm_medium || null,
+          utm_campaign: trafficSource.utm_campaign || null,
+          utm_term: trafficSource.utm_term || null,
+          utm_content: trafficSource.utm_content || null,
+          referrer: trafficSource.referrer || null,
 
           // Full data payload
           report_data: {
             result,
             quizResponses,
             crm: crmData, 
+            traffic: trafficSource,
             meta: { source: 'web_app', version: '1.0' }
           }
         }

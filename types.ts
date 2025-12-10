@@ -1,3 +1,4 @@
+
 export enum QuestionCategory {
   STRATEGY = 'Strategy',
   VISUALS = 'Visuals',
@@ -30,9 +31,18 @@ export interface LeadInfo {
   position: string;
   email: string;
   phone: string;
-  revenue: string;      // New Field
-  companySize: string;  // New Field
-  fullName?: string; // Derived for backward compatibility if needed
+  revenue: string;      
+  companySize: string;  
+  fullName?: string; 
+}
+
+export interface TrafficSource {
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_term?: string;
+  utm_content?: string;
+  referrer?: string;
 }
 
 export interface TechnicalSignal {
@@ -51,7 +61,7 @@ export interface CategoryAnalysis {
 
 export interface AuditResult {
   momentumScore: number;
-  businessContext: string; // New field: "We identified [Brand] as a [Type] business..."
+  businessContext: string; 
   executiveSummary: string;
   technicalSignals: TechnicalSignal[];
   categories: CategoryAnalysis[];

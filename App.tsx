@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { AppStep, BrandInfo, UserResponse, AuditResult, LeadInfo } from './types';
+import { AppStep, BrandInfo, UserResponse, AuditResult, LeadInfo, TrafficSource } from './types';
 import { LandingStep } from './components/LandingStep';
 import { InputStep } from './components/InputStep';
 import { QuizStep } from './components/QuizStep';
@@ -17,8 +18,23 @@ const App: React.FC = () => {
   const [leadInfo, setLeadInfo] = useState<LeadInfo | null>(null);
   const [auditResult, setAuditResult] = useState<AuditResult | null>(null);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
+  const [trafficSource, setTrafficSource] = useState<TrafficSource>({});
 
-  // Check for ID-based Link (Supabase) OR Legacy Magic Link on Mount
+  // 1. Capture UTMs & Referrer on Mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sourceData: TrafficSource = {
+      utm_source: params.get('utm_source') || undefined,
+      utm_medium: params.get('utm_medium') || undefined,
+      utm_campaign: params.get('utm_campaign') || undefined,
+      utm_term: params.get('utm_term') || undefined,
+      utm_content: params.get('utm_content') || undefined,
+      referrer: document.referrer || undefined
+    };
+    setTrafficSource(sourceData);
+  }, []);
+
+  // 2. Check for ID-based Link (Supabase) OR Legacy Magic Link on Mount
   useEffect(() => {
     const fetchReport = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -92,9 +108,9 @@ const App: React.FC = () => {
         if (isMounted) {
           setAuditResult(result);
           
-          // 2. Save to Supabase (Includes CRM Data Generation)
+          // 2. Save to Supabase (Includes CRM Data Generation & Traffic Source)
           console.log("Saving to DB...");
-          await saveToSupabase(brandData, leadInfo, result, quizResponses);
+          await saveToSupabase(brandData, leadInfo, result, quizResponses, trafficSource);
           
           // 4. Show Dashboard
           setStep(AppStep.DASHBOARD);
@@ -110,7 +126,7 @@ const App: React.FC = () => {
     }
 
     return () => { isMounted = false; };
-  }, [step, brandData, leadInfo, quizResponses, auditResult]);
+  }, [step, brandData, leadInfo, quizResponses, auditResult, trafficSource]);
 
   // --- HANDLERS ---
 
