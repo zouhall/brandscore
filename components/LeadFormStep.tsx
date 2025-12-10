@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { LeadInfo } from '../types';
 import { Button } from './Button';
@@ -23,7 +22,8 @@ const REVENUE_RANGES = [
   "$500k - $1M",
   "$1M - $5M",
   "$5M - $10M",
-  "$10M+"
+  "$10M+",
+  "Prefer not to say"
 ];
 
 const COMPANY_SIZES = [
@@ -31,7 +31,8 @@ const COMPANY_SIZES = [
   "6-20 Employees",
   "21-50 Employees",
   "51-200 Employees",
-  "200+ Employees"
+  "200+ Employees",
+  "Prefer not to say"
 ];
 
 export const LeadFormStep: React.FC<LeadFormStepProps> = ({ onComplete }) => {

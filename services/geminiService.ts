@@ -10,6 +10,11 @@ const PSI_API_KEY = process.env.VITE_PSI_API_KEY || "";
 
 function normalizeUrl(url: string): string {
   let normalized = url.trim();
+  // Remove trailing slashes
+  if (normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  // Add protocol if missing
   if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
     normalized = `https://${normalized}`;
   }
@@ -37,6 +42,10 @@ function cleanAndParseJSON(text: string): any {
 
 // --- API FETCHERS ---
 
+/**
+ * Robust fetcher for PageSpeed Insights.
+ * Tries Mobile strategy first, retries with Desktop if it fails.
+ */
 async function fetchPageSpeedData(rawUrl: string) {
   const url = normalizeUrl(rawUrl);
   
@@ -50,30 +59,48 @@ async function fetchPageSpeedData(rawUrl: string) {
     };
   }
 
-  try {
-    const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=mobile`;
-    
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-        throw new Error(`PSI API Error: ${response.status}`);
+  const fetchStrategy = async (strategy: 'mobile' | 'desktop') => {
+    try {
+      console.log(`PSI: Attempting crawl with strategy: ${strategy}`);
+      const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=${strategy}`;
+      
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+          throw new Error(`PSI API Error: ${response.status}`);
+      }
+  
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+  
+      const lighthouse = data.lighthouseResult;
+      return {
+        success: true,
+        performanceScore: (lighthouse.categories.performance.score * 100) || 0,
+        coreWebVitals: {
+          lcp: lighthouse.audits['largest-contentful-paint'].displayValue,
+          cls: lighthouse.audits['cumulative-layout-shift'].displayValue,
+          fcp: lighthouse.audits['first-contentful-paint'].displayValue,
+        },
+        techStackIds: lighthouse.stackPacks?.map((p: any) => p.title) || []
+      };
+    } catch (error) {
+      console.warn(`PSI ${strategy} fetch failed:`, error);
+      return null;
     }
+  };
 
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message);
+  // 1. Try Mobile
+  let result = await fetchStrategy('mobile');
+  
+  // 2. Retry with Desktop if Mobile failed
+  if (!result) {
+    console.log("PSI: Retrying with Desktop strategy...");
+    result = await fetchStrategy('desktop');
+  }
 
-    const lighthouse = data.lighthouseResult;
-    return {
-      success: true,
-      performanceScore: (lighthouse.categories.performance.score * 100) || 0,
-      coreWebVitals: {
-        lcp: lighthouse.audits['largest-contentful-paint'].displayValue,
-        cls: lighthouse.audits['cumulative-layout-shift'].displayValue,
-        fcp: lighthouse.audits['first-contentful-paint'].displayValue,
-      },
-      techStackIds: lighthouse.stackPacks?.map((p: any) => p.title) || []
-    };
-  } catch (error) {
-    console.warn("PSI fetch failed, defaulting to manual check mode.", error);
+  // 3. Final Fallback
+  if (!result) {
+    console.error("PSI: All crawl attempts failed.");
     return {
       success: false,
       performanceScore: -1,
@@ -81,6 +108,8 @@ async function fetchPageSpeedData(rawUrl: string) {
       techStackIds: []
     };
   }
+
+  return result;
 }
 
 // --- MAIN SERVICE ---
@@ -98,7 +127,7 @@ export const performBrandAudit = async (
     console.warn("Failed to initialize GoogleGenAI client:", e);
   }
 
-  // 1. Fetch Real Technical Data
+  // 1. Fetch Real Technical Data (With Retry Logic)
   const psiData = await fetchPageSpeedData(brand.url);
   
   // 2. Format User Answers
@@ -132,13 +161,13 @@ export const performBrandAudit = async (
   } else {
      realTechnicalSignals.push({
       label: "Website Scan",
-      value: "Manual Check Needed",
+      value: "Connection Error",
       status: "warning"
     });
     realTechnicalSignals.push({
-        label: "Connection",
-        value: "Verified",
-        status: "good"
+        label: "Manual Check",
+        value: "Required",
+        status: "critical"
     });
   }
 
@@ -156,22 +185,23 @@ export const performBrandAudit = async (
   const prompt = `
     You are a forensic brand auditor. You must analyze the brand "${brand.name}" located at the specific domain "${domain}".
     
-    **CRITICAL DISAMBIGUATION PROTOCOL:**
-    1. The brand name might be generic (e.g., "Old Fashioned Club"). There may be many companies with this name.
-    2. You MUST IGNORE any entity that does not reside at "${domain}".
-    3. **EXECUTE A SEARCH** for "site:${domain}" to read the meta titles and descriptions of the actual pages on this site.
-    4. Based ONLY on the "site:${domain}" results, determine the industry (e.g. Fashion, SaaS, Cocktails).
-    5. If "site:${domain}" yields no clear results, search for "${domain}" (in quotes) to find social profiles linked to this specific URL.
+    **CRITICAL DATA SOURCE PROTOCOL:**
+    1. **TECHNICAL DATA:**
+       - Mobile Speed Score provided: ${speedInput}
+       - Tech Stack provided: ${techInput}
+       
+       **IMPORTANT:** If "Mobile Speed" is "UNAVAILABLE" or "Unknown", you **MUST** use the 'google_search' tool to manually search for "site:${domain}" to read the meta title and description yourself. Do not just say "I can't access it". Infer the business type from the search snippets.
+
+    2. **DISAMBIGUATION:**
+       - The brand name might be generic. Ignore any entity that does not reside at "${domain}".
+       - If "site:${domain}" yields no clear results, search for "${domain}" (in quotes) to find social profiles linked to this URL.
 
     **SCORING & TONE:**
     - Tone: Professional, direct, "tough love". No fluff.
     - If the user answered "No" to critical questions (like marketing spend), be harsh in the strategy section.
-    - If the site speed is low (${speedInput}), emphasize that they are losing traffic.
+    - If the site speed is low (${speedInput}) or UNAVAILABLE, emphasize that they are losing traffic due to technical friction.
 
-    **INPUT DATA:**
-    - Mobile Speed: ${speedInput}
-    - Tech Stack: ${techInput}
-    - Questionnaire Results:
+    **QUESTIONNAIRE RESULTS:**
     ${formattedAnswers}
 
     **OUTPUT FORMAT (JSON ONLY):**
@@ -206,7 +236,7 @@ export const performBrandAudit = async (
       return {
         momentumScore: psiData.success ? Math.round((psiData.performanceScore + quizScore) / 2) : quizScore,
         businessContext: `Analysis based on provided inputs for ${brand.name}.`,
-        executiveSummary: "We have generated a preliminary score based on your inputs and technical scan.",
+        executiveSummary: "We have generated a preliminary score based on your inputs. Technical scan was inconclusive, manual review recommended.",
         technicalSignals: realTechnicalSignals,
         categories: [
             { title: QuestionCategory.STRATEGY, score: 70, diagnostic: "Strategy check.", evidence: ["User Input"], strategy: "Review strategy." },
@@ -223,7 +253,7 @@ export const performBrandAudit = async (
 
   if (!ai) return getFallbackResult();
   
-  // RETRY LOOP
+  // RETRY LOOP FOR AI GENERATION
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       console.log(`AI Attempt ${attempt}...`);
