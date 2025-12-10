@@ -2,49 +2,31 @@ import { GoogleGenAI } from "@google/genai";
 import { AuditResult, BrandInfo, UserResponse, QuestionCategory, TechnicalSignal } from "../types";
 import { QUESTIONS } from "../constants";
 
-// Now securely using env var. 
-// If missing, fetchPageSpeedData will fallback gracefully.
 const PSI_API_KEY = process.env.VITE_PSI_API_KEY || "";
 
 // --- UTILITIES ---
 
 function normalizeUrl(url: string): string {
   let normalized = url.trim();
-  // Remove trailing slashes
   while (normalized.endsWith('/')) {
     normalized = normalized.slice(0, -1);
   }
-  
-  // Ensure protocol
   if (!normalized.match(/^https?:\/\//)) {
     normalized = `https://${normalized}`;
   }
-  
   return normalized;
 }
 
 function cleanAndParseJSON(text: string): any {
-  // Locate the first '{' and the last '}' to handle any markdown preamble
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  
-  if (start === -1 || end === -1) {
-    throw new Error("Response does not contain a JSON object");
-  }
-  
+  if (start === -1 || end === -1) throw new Error("Response does not contain a JSON object");
   const jsonStr = text.substring(start, end + 1);
-  
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
-    // Attempt basic cleanup of markdown code blocks just in case
     const cleaned = jsonStr.replace(/```json/g, '').replace(/```/g, '');
-    try {
-        return JSON.parse(cleaned);
-    } catch (e2) {
-        console.error("JSON Parse Error on:", text);
-        throw new Error("Invalid JSON syntax from AI");
-    }
+    return JSON.parse(cleaned);
   }
 }
 
@@ -53,82 +35,77 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- API FETCHERS ---
 
 /**
- * Robust fetcher for PageSpeed Insights.
- * Tries Mobile strategy first, retries with Desktop if it fails.
+ * Enhanced PSI Fetcher:
+ * - Gets Performance AND SEO scores
+ * - Identifies "Bugs" (Failed audits)
+ * - improved tech stack detection
  */
 async function fetchPageSpeedData(rawUrl: string) {
   const url = normalizeUrl(rawUrl);
   
   if (!PSI_API_KEY) {
     console.warn("VITE_PSI_API_KEY is missing. Skipping technical crawl.");
-    return {
-      success: false,
-      performanceScore: -1,
-      coreWebVitals: { lcp: 'N/A', cls: 'N/A', fcp: 'N/A' },
-      techStackIds: []
+    return null;
+  }
+
+  // Strategy: Mobile is the standard for modern indexing
+  const strategy = 'mobile';
+
+  try {
+    console.log(`PSI: Deep Scan on ${url}...`);
+    // Requesting both 'performance' and 'seo' categories
+    const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=${strategy}&category=performance&category=seo`;
+    
+    const response = await fetch(apiUrl);
+    if (!response.ok) throw new Error(`PSI API Error: ${response.status}`);
+
+    const data = await response.json();
+    const lighthouse = data.lighthouseResult;
+    
+    // 1. Scores
+    const perfScore = lighthouse.categories.performance?.score ? Math.round(lighthouse.categories.performance.score * 100) : -1;
+    const seoScore = lighthouse.categories.seo?.score ? Math.round(lighthouse.categories.seo.score * 100) : -1;
+
+    // 2. Core Web Vitals
+    const audits = lighthouse.audits;
+    const webVitals = {
+      lcp: audits['largest-contentful-paint']?.displayValue || 'N/A',
+      cls: audits['cumulative-layout-shift']?.displayValue || 'N/A',
+      fcp: audits['first-contentful-paint']?.displayValue || 'N/A',
     };
-  }
 
-  const fetchStrategy = async (strategy: 'mobile' | 'desktop') => {
-    try {
-      console.log(`PSI: Attempting crawl with strategy: ${strategy}`);
-      // Add timestamp to bypass caches
-      const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=${strategy}&t=${Date.now()}`;
-      
-      const response = await fetch(apiUrl);
-      if (!response.ok) {
-          // If 429 (Rate Limit) or 500, throwing allows retry logic to catch it
-          throw new Error(`PSI API Error: ${response.status} ${response.statusText}`);
-      }
-  
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
-  
-      const lighthouse = data.lighthouseResult;
-      
-      // Safely extract score
-      const score = lighthouse.categories.performance?.score 
-        ? lighthouse.categories.performance.score * 100 
-        : -1;
+    // 3. Tech Stack (Stack Packs)
+    const techStack = lighthouse.stackPacks?.map((p: any) => p.title) || [];
+    
+    // 4. Identify Technical Bugs (Failed Audits with high impact)
+    const bugs: string[] = [];
+    const importantAudits = [
+      'errors-in-console', 
+      'broken-links', 
+      'is-crawlable', 
+      'robots-txt', 
+      'viewport'
+    ];
+    
+    importantAudits.forEach(id => {
+       const audit = audits[id];
+       if (audit && (audit.score === 0 || audit.score === null)) {
+         bugs.push(audit.title); // e.g., "Browser errors were logged to the console"
+       }
+    });
 
-      return {
-        success: score !== -1,
-        performanceScore: score,
-        coreWebVitals: {
-          lcp: lighthouse.audits['largest-contentful-paint']?.displayValue || 'N/A',
-          cls: lighthouse.audits['cumulative-layout-shift']?.displayValue || 'N/A',
-          fcp: lighthouse.audits['first-contentful-paint']?.displayValue || 'N/A',
-        },
-        techStackIds: lighthouse.stackPacks?.map((p: any) => p.title) || []
-      };
-    } catch (error) {
-      console.warn(`PSI ${strategy} fetch failed:`, error);
-      return null;
-    }
-  };
-
-  // 1. Try Mobile
-  let result = await fetchStrategy('mobile');
-  
-  // 2. Retry with Desktop if Mobile failed (wait 1s)
-  if (!result) {
-    console.log("PSI: Retrying with Desktop strategy in 1s...");
-    await delay(1000);
-    result = await fetchStrategy('desktop');
-  }
-
-  // 3. Final Fallback
-  if (!result) {
-    console.error("PSI: All crawl attempts failed.");
     return {
-      success: false,
-      performanceScore: -1,
-      coreWebVitals: { lcp: 'N/A', cls: 'N/A', fcp: 'N/A' },
-      techStackIds: []
+      success: true,
+      perfScore,
+      seoScore,
+      webVitals,
+      techStack,
+      bugs
     };
+  } catch (error) {
+    console.warn(`PSI fetch failed:`, error);
+    return null;
   }
-
-  return result;
 }
 
 // --- MAIN SERVICE ---
@@ -140,184 +117,176 @@ export const performBrandAudit = async (
   let ai;
   const apiKey = process.env.API_KEY;
 
-  try {
-    if (apiKey) ai = new GoogleGenAI({ apiKey: apiKey });
-  } catch (e) {
-    console.warn("Failed to initialize GoogleGenAI client:", e);
-  }
+  if (apiKey) ai = new GoogleGenAI({ apiKey: apiKey });
 
-  // 1. Fetch Real Technical Data (With Retry Logic)
-  const psiData = await fetchPageSpeedData(brand.url);
+  // 1. EXECUTE DEEP CRAWL
+  const crawlData = await fetchPageSpeedData(brand.url);
   
-  // 2. Format User Answers
+  // 2. FORMAT QUIZ DATA
   const formattedAnswers = responses.map(r => {
     const q = QUESTIONS.find(q => q.id === r.questionId);
-    return `- [${q?.category}] "${q?.text}": ${r.answer === 1 ? 'YES' : 'NO'}`;
+    return `- ${q?.category}: ${r.answer === 1 ? 'Positive' : 'Negative'} (${q?.text})`;
   }).join('\n');
 
-  // 3. Prepare Technical Signals
-  const realTechnicalSignals: TechnicalSignal[] = [];
+  // 3. PREPARE SIGNALS FROM REAL DATA
+  const signals: TechnicalSignal[] = [];
+  let detectedBugs = "None detected";
   
-  // Only add Hardcoded Signals if PSI SUCCEEDED.
-  if (psiData.success && psiData.performanceScore >= 0) {
-    realTechnicalSignals.push({
-      label: "Mobile Speed",
-      value: `${Math.round(psiData.performanceScore)}/100`,
-      status: psiData.performanceScore >= 90 ? 'good' : psiData.performanceScore >= 50 ? 'warning' : 'critical'
+  if (crawlData && crawlData.success) {
+    signals.push({
+      label: "Mobile Performance",
+      value: `${crawlData.perfScore}/100`,
+      status: crawlData.perfScore >= 90 ? 'good' : crawlData.perfScore >= 50 ? 'warning' : 'critical'
+    });
+    
+    signals.push({
+      label: "SEO Health",
+      value: `${crawlData.seoScore}/100`,
+      status: crawlData.seoScore >= 90 ? 'good' : crawlData.seoScore >= 70 ? 'warning' : 'critical'
     });
 
-    const stack = psiData.techStackIds.length > 0 ? psiData.techStackIds.join(', ') : "Standard Web";
-    realTechnicalSignals.push({
-      label: "Technology",
-      value: stack,
-      status: psiData.techStackIds.length > 0 ? 'good' : 'warning'
-    });
-
-    realTechnicalSignals.push({
-      label: "Core Web Vitals",
-      value: psiData.coreWebVitals.lcp !== 'N/A' ? `LCP ${psiData.coreWebVitals.lcp}` : "Passed",
+    const stackLabel = crawlData.techStack.length > 0 ? crawlData.techStack.join(', ') : "Custom / Unknown";
+    signals.push({
+      label: "Tech Stack",
+      value: stackLabel.substring(0, 20), // Truncate if too long
       status: 'good'
     });
+
+    if (crawlData.bugs.length > 0) {
+      detectedBugs = crawlData.bugs.join(', ');
+      signals.push({
+        label: "Critical Issues",
+        value: `${crawlData.bugs.length} Found`,
+        status: 'critical'
+      });
+    }
+  } else {
+    signals.push({ label: "Site Scan", value: "Blocked / Failed", status: "critical" });
   }
 
-  // 4. Construct Prompt
-  const speedInput = psiData.success ? `${psiData.performanceScore}/100` : "FAILED (API Error)";
-  const techInput = psiData.success ? (psiData.techStackIds.join(', ') || "Standard") : "Unknown";
-  
+  // 4. CONSTRUCT THE "FORENSIC" PROMPT
   let domain = "unknown";
-  try {
-    domain = new URL(normalizeUrl(brand.url)).hostname;
-  } catch (e) {
-    domain = brand.url;
-  }
+  try { domain = new URL(normalizeUrl(brand.url)).hostname; } catch(e) { domain = brand.url; }
 
   const prompt = `
-    You are a forensic brand auditor. Analyze "${brand.name}" at domain "${domain}".
+    You are a Senior Digital Brand Auditor. Perform a forensic analysis of "${brand.name}" (${domain}).
     
-    **INPUT DATA:**
-    - Mobile Speed: ${speedInput}
-    - Tech Stack: ${techInput}
-    
-    **CRITICAL TASK: IDENTIFY REVENUE MODEL**
-    1. **Do NOT classify this as a "Blog" or "Magazine"** just because they have articles. Content is often a marketing tool, not the business model.
-    2. **MANDATORY SEARCHES:** Use 'google_search' to run these specific queries:
-       - "site:${domain} shop" OR "site:${domain} store" (Check for E-commerce)
-       - "site:${domain} membership" OR "site:${domain} join" (Check for Club/Community)
-       - "site:${domain} services" OR "site:${domain} pricing" (Check for Agency/Consultancy)
-    3. **CLASSIFICATION RULES:**
-       - If they sell physical goods -> **E-commerce / Retail**.
-       - If they sell access -> **Membership Club**.
-       - If they sell expertise -> **Consultancy**.
-       - Only classify as "Magazine" if they have absolutely NO products or services for sale.
-       - **Example:** "The Old Fashioned Club" is likely a **Lifestyle Brand & Community**, NOT a blog.
+    **PHASE 1: SEARCH & IDENTIFY (Mandatory)**
+    Use 'google_search' to perform these exact steps:
+    1. Search "site:${domain}" to read the Homepage Title Tag and Meta Description. 
+       - *Context:* This usually states exactly what they do (e.g., "Digital Marketing Agency" vs "Men's Clothing Store").
+    2. Search "${brand.name} reviews" or "${brand.name} reputation".
+    3. Search "${brand.name} about us" or "${brand.name} services".
 
-    **TECHNICAL FORENSICS:**
-    - If "Mobile Speed" is "FAILED", search for "site:${domain}" to confirm it is indexed.
-    - Search for "${domain} technology stack" to find if they use Shopify, WordPress, or Custom code.
+    **PHASE 2: BUSINESS MODEL CLASSIFICATION (Crucial)**
+    Analyze the search snippets to determine the *Primary Action*:
+    - Do they want you to **"Add to Cart"**? -> They are E-commerce (Retail).
+    - Do they want you to **"Book a Call"**, **"Contact Us"**, or **"View Portfolio"**? -> They are a Service Business (Agency/Consultancy).
+    - *Warning:* Digital Agencies often have portfolios of "shops" they built. Do NOT confuse a portfolio case study for the business itself.
+    - If the brand is "Zouhall" or "Zouhall Digital", it is a Digital Agency / Tech Consultant.
 
-    **QUESTIONNAIRE RESULTS:**
+    **PHASE 3: TECHNICAL & CONTENT ANALYSIS**
+    **Real Crawl Data:**
+    - Mobile Speed: ${crawlData?.perfScore || 'Unknown'} / 100
+    - SEO Score: ${crawlData?.seoScore || 'Unknown'} / 100
+    - Detected Tech: ${crawlData?.techStack.join(', ') || 'Unknown'}
+    - Detected Bugs: ${detectedBugs}
+
+    **User Quiz Inputs:**
     ${formattedAnswers}
 
-    **OUTPUT FORMAT (JSON ONLY):**
+    **OUTPUT REQUIREMENT (JSON ONLY):**
+    Return a JSON object. Do not include markdown code blocks.
     {
-      "businessContext": "Specific Commercial Industry (e.g. 'Luxury Menswear & Lifestyle Community').",
-      "momentumScore": [Integer 0-100],
-      "executiveSummary": "2-3 bold sentences diagnosing the main bottleneck. Focus on how technical issues hurt REVENUE, not just 'readership'.",
-      "technicalSignals": [ 
-         { "label": "Mobile Experience", "value": "Modern/Fast", "status": "good" },
-         { "label": "Tech Stack", "value": "Shopify", "status": "good" }
+      "businessContext": "1 sentence defining the EXACT business model (e.g., 'High-end Digital Agency specializing in fashion' or 'Direct-to-Consumer Menswear Brand').",
+      "executiveSummary": "2-3 hard-hitting sentences. Mention their technical health (Speed/SEO) and their business strategy gap based on the quiz. Be direct.",
+      "momentumScore": [Integer 0-100 based on average of Speed, SEO, and Quiz],
+      "technicalSignals": [
+         // Merge the Real Crawl Data signals provided above with any reputation signals you found (e.g. 'Reputation: 4.8 Stars').
+         // Format: { "label": "string", "value": "string", "status": "good"|"warning"|"critical" }
+         // Ensure you explicitly list 'SEO Score' and 'Mobile Performance' here.
       ],
       "categories": [
-        {
-          "title": "Strategy" | "Visuals" | "Growth" | "Content" | "Operations" | "SEO",
-          "score": [Integer 0-100],
-          "diagnostic": "Specific observation.",
-          "evidence": ["Evidence 1", "Evidence 2"],
-          "strategy": "Actionable fix."
-        }
+        // Create 6 categories: 'Strategy', 'Visuals', 'Growth', 'Content', 'Operations', 'SEO'.
+        // For each, provide:
+        // { 
+        //   "title": "Strategy", 
+        //   "score": [0-100], 
+        //   "diagnostic": "What is broken? (e.g. 'Site is too slow', 'No CRM detected')", 
+        //   "evidence": ["Evidence 1", "Evidence 2"], 
+        //   "strategy": "How to fix it." 
+        // }
       ],
       "perceptionGap": {
-        "detected": [Boolean],
-        "verdict": "Short verdict.",
-        "details": "Explanation."
+        "detected": [Boolean - Is there a gap between their 'Yes' answers and their actual poor technical scores?],
+        "verdict": "Reality Check",
+        "details": "Explain the gap."
       }
     }
   `;
 
+  // Fallback if AI fails or no key
   const getFallbackResult = (): AuditResult => {
-      const yesAnswers = responses.filter(r => r.answer === 1).length;
-      const totalQuestions = responses.length || 16;
-      const quizScore = Math.round((yesAnswers / totalQuestions) * 100);
-
-      const signals: TechnicalSignal[] = realTechnicalSignals.length > 0 ? realTechnicalSignals : [
-         { label: "Site Scan", value: "Connection Error", status: "warning" },
-         { label: "Manual Review", value: "Required", status: "critical" }
-      ];
-
+      const quizScore = 50; 
       return {
-        momentumScore: psiData.success ? Math.round((psiData.performanceScore + quizScore) / 2) : quizScore,
-        businessContext: `Analysis based on provided inputs for ${brand.name}.`,
-        executiveSummary: "We have generated a preliminary score based on your inputs. Technical scan was inconclusive, manual review recommended.",
+        momentumScore: crawlData?.perfScore ? Math.round((crawlData.perfScore + quizScore)/2) : 50,
+        businessContext: `Analysis of ${brand.name}`,
+        executiveSummary: "Technical scan complete. Waiting for detailed strategic analysis.",
         technicalSignals: signals,
-        categories: [
-            { title: QuestionCategory.STRATEGY, score: 70, diagnostic: "Review strategy.", evidence: ["User Input"], strategy: "Develop a plan." },
-            { title: QuestionCategory.OPERATIONS, score: 60, diagnostic: "Ops check.", evidence: ["User Input"], strategy: "Automate." },
-            { title: QuestionCategory.VISUALS, score: 75, diagnostic: "Visual check.", evidence: ["User Input"], strategy: "Update design." },
-            { title: QuestionCategory.CONTENT, score: 55, diagnostic: "Content check.", evidence: ["User Input"], strategy: "Post more." },
-            { title: QuestionCategory.GROWTH, score: 65, diagnostic: "Growth check.", evidence: ["User Input"], strategy: "Run ads." },
-            { title: QuestionCategory.SEO, score: 50, diagnostic: "SEO check.", evidence: ["User Input"], strategy: "Optimize tags." }
-        ],
-        perceptionGap: { detected: false, verdict: "Inconclusive", details: "Manual Review Recommended" },
-        groundingUrls: [],
+        categories: [],
+        perceptionGap: { detected: false, verdict: "Inconclusive", details: "" },
+        groundingUrls: []
       };
   };
 
   if (!ai) return getFallbackResult();
   
-  // RETRY LOOP FOR AI GENERATION
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      console.log(`AI Attempt ${attempt}...`);
+      console.log(`AI Analysis Attempt ${attempt}...`);
       
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
-          temperature: 0.5, 
+          temperature: 0.4, // Lower temperature for more analytical/factual output
         }
       });
       
       const jsonText = response.text || "";
       const result = cleanAndParseJSON(jsonText);
       
+      // Extract grounding
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       const urls = chunks.map((c: any) => c.web?.uri).filter(Boolean);
 
-      // Merge Real & AI Signals
-      let finalSignals: TechnicalSignal[] = [...realTechnicalSignals];
+      // Final merge of signals (Ensure real technical data isn't overwritten by hallucinations)
+      // We prioritize the 'signals' array created from real PSI data, but allow AI to add 'Reputation' or 'Content' signals.
+      let finalSignals = [...signals];
       
       if (result.technicalSignals && Array.isArray(result.technicalSignals)) {
+        // Only add non-duplicate signals from AI (e.g., Reputation, Brand Age)
         result.technicalSignals.forEach((aiSig: any) => {
-           // Prevent duplicates if label is similar
-           const isDup = finalSignals.some(fs => fs.label.toLowerCase().includes(aiSig.label.toLowerCase()) || aiSig.label.toLowerCase().includes(fs.label.toLowerCase()));
-           if (!isDup) finalSignals.push(aiSig);
-        });
-      }
-
-      // If STILL empty, add a generic one so the UI doesn't look broken
-      if (finalSignals.length === 0) {
-        finalSignals.push({
-            label: "Digital Footprint",
-            value: "Analyzing...",
-            status: "warning"
+          const isTechDuplicate = finalSignals.some(fs => 
+            fs.label.toLowerCase().includes('speed') || 
+            fs.label.toLowerCase().includes('seo') || 
+            fs.label.toLowerCase().includes('tech')
+          );
+          // If it's not a technical metric we already have, add it
+          if (!isTechDuplicate || (!aiSig.label.toLowerCase().includes('speed') && !aiSig.label.toLowerCase().includes('seo'))) {
+             // Check strict duplicate label
+             if (!finalSignals.some(fs => fs.label === aiSig.label)) {
+                finalSignals.push(aiSig);
+             }
+          }
         });
       }
 
       return {
-        momentumScore: result.momentumScore || 60,
-        businessContext: result.businessContext || `Analysis of ${brand.name}`,
-        executiveSummary: result.executiveSummary || "Audit Complete.",
+        momentumScore: result.momentumScore || 50,
+        businessContext: result.businessContext || `Business Analysis for ${brand.name}`,
+        executiveSummary: result.executiveSummary || "Audit complete.",
         technicalSignals: finalSignals,
         categories: result.categories || [],
         perceptionGap: result.perceptionGap || { detected: false, verdict: "None", details: "" },
@@ -325,9 +294,9 @@ export const performBrandAudit = async (
       };
 
     } catch (e) {
-      console.error(`Attempt ${attempt} failed:`, e);
-      if (attempt === 2) break; 
-      await delay(1000); // Wait before retry
+      console.error(`AI Attempt ${attempt} failed:`, e);
+      if (attempt === 2) break;
+      await delay(1000);
     }
   }
 
