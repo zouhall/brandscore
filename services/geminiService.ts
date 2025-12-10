@@ -79,7 +79,8 @@ async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s hard timeout
+    // INCREASED TIMEOUT: PSI is slow, giving it 60s prevents premature aborts
+    const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
     try {
       const response = await fetch(endpoint.toString(), { signal: controller.signal });
@@ -111,7 +112,17 @@ async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
     try {
       attempt1 = await performFetch(true);
     } catch (e: any) {
-      if (e.message !== "MISSING_KEY") console.warn("PSI Network Error:", e);
+      // If Timeout (AbortError), try ONE more time with KEY before giving up
+      if (e.name === 'AbortError') {
+        console.warn("PSI Request Timed Out (60s). Retrying once with key...");
+        try {
+           attempt1 = await performFetch(true);
+        } catch(e2) {
+           console.warn("PSI Retry also failed:", e2);
+        }
+      } else if (e.message !== "MISSING_KEY") {
+        console.warn("PSI Network Error:", e);
+      }
     }
 
     if (attempt1 && !attempt1.error) {
@@ -119,32 +130,43 @@ async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
     } else {
       // Fallback Logic
       const status = attempt1?.status || 0;
-      let shouldRetry = true;
+      let shouldRetryAnonymous = true;
       let waitTime = 1000;
 
+      // If we had a key but it failed with 403/429/500, we might try anonymous
+      // BUT if we timed out (status 0), anonymous is likely to fail too, so we skip to fallback to save time.
+      if (!attempt1 && !data) {
+         console.warn("PSI failed to connect (likely timeout). Skipping anonymous retry to prevent 429.");
+         shouldRetryAnonymous = false;
+      }
+
       if (status === 403) {
-         console.error("CRITICAL: Google Cloud API Key rejected. Ensure 'PageSpeed Insights API' is ENABLED in console.cloud.google.com.");
+         console.error("CRITICAL: Google Cloud API Key rejected. Ensure 'PageSpeed Insights API' is ENABLED.");
          waitTime = 500; 
       } else if (status === 429) {
          console.warn("QUOTA EXCEEDED (429). Waiting 5s before anonymous retry...");
          waitTime = 5000;
       }
 
-      if (shouldRetry) {
+      if (shouldRetryAnonymous) {
          await delay(waitTime);
          console.log("Retrying PSI anonymously...");
          const attempt2 = await performFetch(false);
          if (attempt2 && !attempt2.error) {
            data = attempt2;
          } else {
-           throw new Error(`PSI Failed: ${attempt2?.status || 'Unknown'} - ${attempt2?.text || ''}`);
+           // Don't throw, just log and let fallback handle it
+           console.warn(`PSI Anonymous Failed: ${attempt2?.status || 'Unknown'}`);
          }
       }
     }
 
-    const lighthouse = data?.lighthouseResult;
-    if (!lighthouse) throw new Error("No lighthouse data");
+    // FINAL CHECK: Do we have data?
+    if (!data || !data.lighthouseResult) {
+       throw new Error("PSI Data Unavailable");
+    }
 
+    const lighthouse = data.lighthouseResult;
     const perfScore = lighthouse.categories.performance?.score 
         ? Math.round(lighthouse.categories.performance.score * 100) : -1;
     const seoScore = lighthouse.categories.seo?.score 
@@ -237,7 +259,7 @@ export const performBrandAudit = async (
     **STEP 2: TECHNICAL ANALYSIS**
     ${psiData.success 
       ? `Real Data: Speed ${psiData.perfScore}/100, SEO ${psiData.seoScore}/100.` 
-      : `CRITICAL: The automated scan was blocked. YOU MUST ESTIMATE HEALTH based on the site's search results. 
+      : `CRITICAL: The automated scan was blocked/timed-out. YOU MUST ESTIMATE HEALTH based on the site's search results. 
          - If the site has a modern meta title and rich snippets, assume "Moderate" health.
          - If the site is missing from search or looks broken, assume "Critical" health.
          - Do NOT return 0 scores. Return an estimated score (e.g., 65) based on visual credibility.`
