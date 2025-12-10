@@ -50,40 +50,41 @@ interface PsiResult {
 
 /**
  * Robust PSI Fetcher.
- * - Sanitizes Key before sending.
- * - Logs the specific Google Cloud error message for debugging.
- * - handles 429 Quota limits gracefully.
+ * - Uses explicit string concatenation for API KEY to avoid any Header/Param confusion.
+ * - Retries logic included.
  */
 async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
   const url = normalizeUrl(rawUrl);
   
   const performFetch = async (useKey: boolean): Promise<any> => {
-    const endpoint = new URL('https://www.googleapis.com/pagespeedonline/v5/runPagespeed');
-    endpoint.searchParams.append('url', url);
-    endpoint.searchParams.append('strategy', 'mobile');
+    // 1. Prepare Base Params using URLSearchParams for safe encoding of the URL
+    const params = new URLSearchParams();
+    params.append('url', url);
+    params.append('strategy', 'mobile');
+    params.append('category', 'performance');
+    params.append('category', 'seo');
     
-    // Only fetch essential categories to save bandwidth/quota
-    endpoint.searchParams.append('category', 'performance');
-    endpoint.searchParams.append('category', 'seo');
-    
+    // 2. Construct the Base URL String
+    let fetchUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}`;
+
+    // 3. Append Key manually if required (Explicit Query Param)
     if (useKey) {
       if (!PSI_API_KEY) throw new Error("MISSING_KEY");
-      endpoint.searchParams.append('key', PSI_API_KEY);
+      fetchUrl += `&key=${PSI_API_KEY}`;
     }
 
     if (useKey) {
-      // Log partial key to verify sanitization
-      console.log(`PSI Request: Authenticated (Key ends in ...${PSI_API_KEY.slice(-4)})`);
+      console.log(`PSI Request: Authenticated via Query Param (&key=...${PSI_API_KEY.slice(-4)})`);
     } else {
       console.log(`PSI Request: Anonymous`);
     }
 
     const controller = new AbortController();
-    // INCREASED TIMEOUT: PSI is slow, giving it 60s prevents premature aborts
+    // 60s timeout for slow PSI scans
     const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
     try {
-      const response = await fetch(endpoint.toString(), { signal: controller.signal });
+      const response = await fetch(fetchUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (!response.ok) {
@@ -91,7 +92,6 @@ async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
         try {
           const errJson = await response.json();
           errorDetails = errJson.error?.message || response.statusText;
-          // Log the REAL error from Google (e.g. "API not enabled")
           console.warn(`[PSI API ERROR] ${response.status}: ${errorDetails}`);
         } catch (e) { /* ignore */ }
 
@@ -133,10 +133,9 @@ async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
       let shouldRetryAnonymous = true;
       let waitTime = 1000;
 
-      // If we had a key but it failed with 403/429/500, we might try anonymous
-      // BUT if we timed out (status 0), anonymous is likely to fail too, so we skip to fallback to save time.
+      // If we timed out (status 0), anonymous is likely to fail too, so we skip to fallback to save time.
       if (!attempt1 && !data) {
-         console.warn("PSI failed to connect (likely timeout). Skipping anonymous retry to prevent 429.");
+         console.warn("PSI connection failed. Skipping anonymous retry to prevent 429.");
          shouldRetryAnonymous = false;
       }
 
@@ -155,7 +154,6 @@ async function fetchPageSpeedData(rawUrl: string): Promise<PsiResult> {
          if (attempt2 && !attempt2.error) {
            data = attempt2;
          } else {
-           // Don't throw, just log and let fallback handle it
            console.warn(`PSI Anonymous Failed: ${attempt2?.status || 'Unknown'}`);
          }
       }
@@ -241,52 +239,58 @@ export const performBrandAudit = async (
     signals.push({ label: "Site Scan", value: "Visual Analysis Only", status: "warning" });
   }
 
-  // 4. AI PROMPT - ENHANCED FOR CLASSIFICATION & FALLBACKS
+  // 4. AI PROMPT - FORENSIC STYLE
   const domain = normalizeUrl(brand.url).replace(/^https?:\/\//, '');
   
   const prompt = `
-    Role: Senior Brand Auditor.
-    Task: Analyze the brand "${brand.name}" (${domain}).
+    Role: You are the **Zouhall Intelligence Engine**, a ruthless, high-end brand auditor.
+    Tone: Cold, Clinical, Expensive. No fluff. No "Hello". Direct forensic analysis only.
+    Style: Minimalist, Bold, Black & White. 
     
-    **STEP 1: BUSINESS CLASSIFICATION (MANDATORY)**
-    Use 'google_search' to find the site and read the TITLE and META DESCRIPTION.
+    Target: "${brand.name}" (${domain}).
+    Task: Analyze the brand and generate a forensic report.
+
+    **STEP 1: BUSINESS CLASSIFICATION**
+    Use 'google_search' to identify if this is B2B, DTC, or SaaS.
     
-    RULES:
-    1. If the site offers "Services", "Consulting", "Agencies", "Solutions", or "Booking": Classify as **AGENCY / B2B**.
-    2. If the site has a "Cart", "Shop", "Products", or "Collection": Classify as **ECOMMERCE**.
-    3. If it is "Zouhall" or similar: It is a **Digital Growth Agency**.
-    
-    **STEP 2: TECHNICAL ANALYSIS**
+    **STEP 2: DATA INGESTION**
+    [Technical Diagnostics]
     ${psiData.success 
-      ? `Real Data: Speed ${psiData.perfScore}/100, SEO ${psiData.seoScore}/100.` 
-      : `CRITICAL: The automated scan was blocked/timed-out. YOU MUST ESTIMATE HEALTH based on the site's search results. 
-         - If the site has a modern meta title and rich snippets, assume "Moderate" health.
-         - If the site is missing from search or looks broken, assume "Critical" health.
-         - Do NOT return 0 scores. Return an estimated score (e.g., 65) based on visual credibility.`
+      ? `- Mobile Performance: ${psiData.perfScore}/100
+         - SEO Structure: ${psiData.seoScore}/100
+         - Tech Stack: ${psiData.techStack.join(', ') || 'Undetected'}`
+      : `- Automated Scan: BLOCKED (Assume infrastructure is weak or hidden).`
     }
 
-    **STEP 3: STRATEGY ANALYSIS**
-    User Answers:
+    [Strategic Self-Report]
     ${formattedAnswers}
+
+    **STEP 3: GENERATE FORENSIC SUMMARY**
+    Write an 'executiveSummary' in 3 distinct, punchy paragraphs. 
+    Use **bold text** for impact.
+    
+    1. **The Brutal Reality**: Start with a hard truth about their technical setup or market position. (e.g. "**Your tech stack is obsolete.** You are running on Wix/Squarespace which is throttling your SEO visibility.")
+    2. **The Strategy Gap**: Isolate ONE specific "NO" answer from the quiz and attack it. (e.g. "You claimed to want scale, yet you have **zero email automation**. You are voluntarily donating margin to your competitors.")
+    3. **The Verdict**: A final, high-stakes warning. (e.g. "** Momentum is low.** Fix the funnel or continue to bleed ad spend.")
 
     **STEP 4: OUTPUT JSON**
     {
-      "businessContext": "1 concise sentence defining the business model (e.g. 'B2B Creative Agency').",
-      "executiveSummary": "3 sentences. 1) Reality check (Good/Bad tech). 2) The biggest strategy leak identified in the quiz. 3) A direct, high-stakes warning about lost revenue.",
-      "momentumScore": [Integer 0-100. If quiz answers are mostly NO, score must be < 50. If PSI failed, base this 80% on the Quiz and 20% on Search Credibility.],
+      "businessContext": "1 concise sentence defining the business model.",
+      "executiveSummary": "The 3 paragraphs defined above.",
+      "momentumScore": [Integer 0-100. If quiz has many NOs, score must be < 50.],
       "technicalSignals": [
          // If PSI passed, do NOT repeat Speed/SEO.
          // If PSI failed, infer signals like "Search Presence: Strong" or "Tech Stack: Unknown".
-         { "label": "Domain Authority", "value": "High", "status": "good" }
+         { "label": "Domain Authority", "value": "High/Low", "status": "good/warning/critical" }
       ],
       "categories": [
-        // 6 Objects: Strategy, Visuals, Growth, Content, Operations, SEO.
+        // Generate 6 objects: Strategy, Visuals, Growth, Content, Operations, SEO.
         // { "title": "Strategy", "score": 45, "diagnostic": "Specific problem...", "evidence": ["..."], "strategy": "Actionable fix..." }
       ],
       "perceptionGap": {
         "detected": [Boolean],
-        "verdict": "Short Verdict",
-        "details": "Explanation"
+        "verdict": "Short Verdict (e.g. 'Delusion Detected')",
+        "details": "Explanation of why their self-perception matches or fails reality."
       }
     }
   `;
@@ -311,7 +315,7 @@ export const performBrandAudit = async (
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
-          temperature: 0.3
+          temperature: 0.4 // Slightly higher creativity for "Zouhall" tone
         }
       });
       
