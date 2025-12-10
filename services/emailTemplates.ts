@@ -1,7 +1,7 @@
 import { AuditResult, BrandInfo, LeadInfo } from "../types";
 
 export const generateEmailSubject = (brand: BrandInfo, result: AuditResult) => {
-  return `BRAND SCORE - ${brand.name} (${result.momentumScore}/100)`;
+  return `BRAND SCORE - ${brand.name}`;
 };
 
 export const generateEmailHtml = (lead: LeadInfo, brand: BrandInfo, result: AuditResult, reportLink: string) => {

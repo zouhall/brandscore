@@ -11,13 +11,15 @@ const PSI_API_KEY = process.env.VITE_PSI_API_KEY || "";
 function normalizeUrl(url: string): string {
   let normalized = url.trim();
   // Remove trailing slashes
-  if (normalized.endsWith('/')) {
+  while (normalized.endsWith('/')) {
     normalized = normalized.slice(0, -1);
   }
-  // Add protocol if missing
-  if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+  
+  // Ensure protocol
+  if (!normalized.match(/^https?:\/\//)) {
     normalized = `https://${normalized}`;
   }
+  
   return normalized;
 }
 
@@ -139,6 +141,8 @@ export const performBrandAudit = async (
   // 3. Prepare Technical Signals
   const realTechnicalSignals: TechnicalSignal[] = [];
   
+  // Only add Hardcoded Signals if PSI SUCCEEDED.
+  // If failed, we leave this empty and let the AI fill it via search.
   if (psiData.success && psiData.performanceScore >= 0) {
     realTechnicalSignals.push({
       label: "Mobile Speed",
@@ -158,21 +162,12 @@ export const performBrandAudit = async (
       value: psiData.coreWebVitals.lcp || "N/A",
       status: parseFloat(psiData.coreWebVitals.lcp) < 2.5 ? 'good' : 'warning'
     });
-  } else {
-     realTechnicalSignals.push({
-      label: "Website Scan",
-      value: "Connection Error",
-      status: "warning"
-    });
-    realTechnicalSignals.push({
-        label: "Manual Check",
-        value: "Required",
-        status: "critical"
-    });
   }
+  // DO NOT add "Connection Error" here anymore. 
+  // We handle fallback later.
 
   // 4. Construct Prompt
-  const speedInput = psiData.success ? `${psiData.performanceScore}/100` : "UNAVAILABLE";
+  const speedInput = psiData.success ? `${psiData.performanceScore}/100` : "UNAVAILABLE (Crawl Failed)";
   const techInput = psiData.success ? (psiData.techStackIds.join(', ') || "Standard") : "Unknown";
   
   let domain = "unknown";
@@ -190,7 +185,11 @@ export const performBrandAudit = async (
        - Mobile Speed Score provided: ${speedInput}
        - Tech Stack provided: ${techInput}
        
-       **IMPORTANT:** If "Mobile Speed" is "UNAVAILABLE" or "Unknown", you **MUST** use the 'google_search' tool to manually search for "site:${domain}" to read the meta title and description yourself. Do not just say "I can't access it". Infer the business type from the search snippets.
+       **IMPORTANT - IF TECHNICAL DATA IS UNAVAILABLE:**
+       The automated crawl failed. You **MUST** use the 'google_search' tool to manually search for "site:${domain}" and "${domain} technology stack" to infer the technical setup.
+       - Look for clues like "Powered by Shopify", "Wordpress", "Wix", etc.
+       - **Output these findings in the 'technicalSignals' array.**
+       - For the "Mobile Speed" or "Performance" signal, if you cannot measure it, infer "Mobile Optimization" based on whether the site appears modern in search snippets.
 
     2. **DISAMBIGUATION:**
        - The brand name might be generic. Ignore any entity that does not reside at "${domain}".
@@ -233,11 +232,15 @@ export const performBrandAudit = async (
       const totalQuestions = responses.length || 16;
       const quizScore = Math.round((yesAnswers / totalQuestions) * 100);
 
+      const signals: TechnicalSignal[] = realTechnicalSignals.length > 0 ? realTechnicalSignals : [
+         { label: "Scan Status", value: "Manual Check Req.", status: "warning" }
+      ];
+
       return {
         momentumScore: psiData.success ? Math.round((psiData.performanceScore + quizScore) / 2) : quizScore,
         businessContext: `Analysis based on provided inputs for ${brand.name}.`,
         executiveSummary: "We have generated a preliminary score based on your inputs. Technical scan was inconclusive, manual review recommended.",
-        technicalSignals: realTechnicalSignals,
+        technicalSignals: signals,
         categories: [
             { title: QuestionCategory.STRATEGY, score: 70, diagnostic: "Strategy check.", evidence: ["User Input"], strategy: "Review strategy." },
             { title: QuestionCategory.OPERATIONS, score: 60, diagnostic: "Ops check.", evidence: ["User Input"], strategy: "Automate leads." },
@@ -273,11 +276,24 @@ export const performBrandAudit = async (
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       const urls = chunks.map((c: any) => c.web?.uri).filter(Boolean);
 
-      const finalSignals = [...realTechnicalSignals];
+      // Merge Logic:
+      // If PSI succeeded, realTechnicalSignals is full -> we generally prefer real data, but allow AI to add more.
+      // If PSI failed, realTechnicalSignals is empty -> we fully rely on AI signals.
+      let finalSignals: TechnicalSignal[] = [...realTechnicalSignals];
+      
       if (result.technicalSignals && Array.isArray(result.technicalSignals)) {
         result.technicalSignals.forEach((aiSig: any) => {
            const isDup = finalSignals.some(fs => fs.label.toLowerCase() === aiSig.label.toLowerCase());
            if (!isDup) finalSignals.push(aiSig);
+        });
+      }
+
+      // If STILL empty (PSI failed AND AI returned nothing), add fallback
+      if (finalSignals.length === 0) {
+        finalSignals.push({
+            label: "Site Scan",
+            value: "Unavailable",
+            status: "warning"
         });
       }
 
