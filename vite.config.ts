@@ -9,7 +9,9 @@ export default defineConfig(({ mode }) => {
   const webhookUrl = env.REACT_APP_WEBHOOK_URL || process.env.REACT_APP_WEBHOOK_URL || '';
   const supabaseUrl = env.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
   const supabaseKey = env.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-  const psiKey = env.VITE_PSI_API_KEY || process.env.VITE_PSI_API_KEY || '';
+  
+  // Robust Key Loading: Check VITE_ prefixed AND non-prefixed versions
+  const psiKey = env.VITE_PSI_API_KEY || process.env.VITE_PSI_API_KEY || env.PSI_API_KEY || process.env.PSI_API_KEY || '';
 
   return {
     plugins: [react()],
