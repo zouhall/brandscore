@@ -47,7 +47,14 @@ const App: React.FC = () => {
             setBrandData(parsed.brand);
             setAuditResult(parsed.result);
             setLeadInfo({ 
-               firstName: 'Visitor', lastName: '', position: 'Guest', email: '', phone: '', fullName: 'Visitor'
+               firstName: 'Visitor', 
+               lastName: '', 
+               position: 'Guest', 
+               email: '', 
+               phone: '', 
+               revenue: 'N/A', 
+               companySize: 'N/A',
+               fullName: 'Visitor'
             }); 
             setStep(AppStep.DASHBOARD);
           }

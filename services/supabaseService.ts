@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { AuditResult, BrandInfo, LeadInfo, UserResponse } from '../types';
 import { prepareCrmData } from './crmService';
+import { generateUUID } from './utils';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
@@ -25,11 +26,25 @@ export const saveToSupabase = async (
   }
 
   try {
-    // 1. Insert the record first to get the UUID
-    const { data, error } = await supabase
+    // 1. Generate ID Client-Side
+    // We do this so we can construct the URL *before* inserting into the DB.
+    // This allows us to do a SINGLE insert, ensuring the Webhook gets all data immediately.
+    const id = generateUUID();
+
+    // 2. Construct the Short URL using the ID
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+    const shortUrl = `${origin}${pathname}?id=${id}`;
+
+    // 3. Generate CRM Data (Email HTML, etc)
+    const crmData = prepareCrmData(lead, brand, result, quizResponses, shortUrl);
+
+    // 4. Single Insert with ALL data
+    const { error } = await supabase
       .from('brand_audits')
       .insert([
         {
+          id: id,
           brand_name: brand.name,
           brand_url: brand.url,
           lead_first_name: lead.firstName,
@@ -37,53 +52,31 @@ export const saveToSupabase = async (
           lead_email: lead.email,
           lead_phone: lead.phone,
           lead_position: lead.position,
-          lead_revenue: lead.revenue,          // Mapped
-          lead_company_size: lead.companySize, // Mapped
+          lead_revenue: lead.revenue,
+          lead_company_size: lead.companySize,
           score: result.momentumScore,
-          // Initial report data, will be enriched in step 3
+          
+          // These columns are now populated immediately for Zapier
+          email_subject: crmData.email_config.subject,
+          email_body: crmData.email_config.html_body,
+          report_url: shortUrl,
+
+          // Full data payload
           report_data: {
             result,
             quizResponses,
+            crm: crmData, 
             meta: { source: 'web_app', version: '1.0' }
           }
         }
-      ])
-      .select('id') // Request the ID back
-      .single();
+      ]);
 
-    if (error || !data) {
+    if (error) {
       console.error("Supabase Insert Error:", error);
       return null;
     }
 
-    // 2. Construct the Short URL using the ID
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
-    const shortUrl = `${origin}${pathname}?id=${data.id}`;
-
-    // 3. Generate CRM Data (Email HTML, etc)
-    const crmData = prepareCrmData(lead, brand, result, quizResponses, shortUrl);
-
-    // 4. Update the record with URL and the enriched CRM data
-    // We update 'report_data' to include the 'crm' field so Zapier can read it easily.
-    const { error: updateError } = await supabase
-      .from('brand_audits')
-      .update({ 
-        report_url: shortUrl,
-        report_data: {
-            result,
-            quizResponses,
-            crm: crmData, // <--- This is what Zapier will read
-            meta: { source: 'web_app', version: '1.0' }
-        }
-      })
-      .eq('id', data.id);
-
-    if (updateError) {
-      console.warn("Failed to update report_url/crm data:", updateError);
-    }
-
-    console.log("Saved to Supabase with ID:", data.id);
+    console.log("Saved to Supabase with ID:", id);
     return shortUrl;
   } catch (err) {
     console.error("Supabase Exception:", err);
@@ -117,8 +110,8 @@ export const getAuditById = async (id: string) => {
         firstName: data.lead_first_name,
         lastName: data.lead_last_name,
         position: data.lead_position,
-        revenue: data.lead_revenue || "",          // Retrieve
-        companySize: data.lead_company_size || "", // Retrieve
+        revenue: data.lead_revenue || "",
+        companySize: data.lead_company_size || "",
         email: data.lead_email,
         phone: data.lead_phone,
         fullName: `${data.lead_first_name} ${data.lead_last_name}`

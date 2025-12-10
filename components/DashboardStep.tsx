@@ -300,7 +300,7 @@ export const DashboardStep: React.FC<DashboardStepProps> = ({ result, brand, lea
           {/* Embedded Calendar */}
           <div className="w-full h-[700px] bg-gray-50">
             <iframe 
-              src="https://cal.com/zouhall/30min?embed=true"
+              src="https://cal.com/mahdi-ayadi-vsmf6p/30min?embed=true"
               width="100%" 
               height="100%" 
               frameBorder="0"

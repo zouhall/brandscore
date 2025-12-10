@@ -1,6 +1,23 @@
 import { AuditResult, BrandInfo } from "../types";
 
 /**
+ * Generates a random UUID v4.
+ * Used to create the ID client-side so we can generate the URL before saving to DB.
+ */
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers or non-secure contexts
+  return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c =>
+    (
+      +c ^
+      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))
+    ).toString(16)
+  );
+}
+
+/**
  * Generates a sharable link by encoding the result in the URL.
  * Used by both CRM and Supabase services.
  */
