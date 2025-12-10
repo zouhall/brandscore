@@ -35,31 +35,41 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- API FETCHERS ---
 
 /**
- * Enhanced PSI Fetcher:
- * - Gets Performance AND SEO scores
- * - Identifies "Bugs" (Failed audits)
- * - improved tech stack detection
+ * Enhanced PSI Fetcher with Fallback Strategy:
+ * 1. Try with API Key (if provided).
+ * 2. If 403/429/500, Retry without API Key (Anonymous quota).
  */
 async function fetchPageSpeedData(rawUrl: string) {
   const url = normalizeUrl(rawUrl);
   
-  if (!PSI_API_KEY) {
-    console.warn("VITE_PSI_API_KEY is missing. Skipping technical crawl.");
-    return null;
-  }
-
-  // Strategy: Mobile is the standard for modern indexing
-  const strategy = 'mobile';
+  const performFetch = async (useKey: boolean) => {
+    let apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&category=performance&category=seo`;
+    if (useKey && PSI_API_KEY) {
+      apiUrl += `&key=${PSI_API_KEY}`;
+    }
+    
+    console.log(`PSI Fetch (Key: ${useKey}) for ${url}...`);
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+       throw new Error(`PSI Error ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  };
 
   try {
-    console.log(`PSI: Deep Scan on ${url}...`);
-    // Requesting both 'performance' and 'seo' categories
-    const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=${strategy}&category=performance&category=seo`;
-    
-    const response = await fetch(apiUrl);
-    if (!response.ok) throw new Error(`PSI API Error: ${response.status}`);
+    let data;
+    try {
+      // Attempt 1: Prioritize Key
+      data = await performFetch(true);
+    } catch (e: any) {
+      console.warn(`PSI Primary Fetch Failed: ${e.message}`);
+      // Attempt 2: Fallback to Anonymous (useful if Key is invalid/restricted or quota exceeded)
+      console.log("Retrying PSI fetch anonymously...");
+      data = await performFetch(false);
+    }
 
-    const data = await response.json();
     const lighthouse = data.lighthouseResult;
     
     // 1. Scores
@@ -90,7 +100,7 @@ async function fetchPageSpeedData(rawUrl: string) {
     importantAudits.forEach(id => {
        const audit = audits[id];
        if (audit && (audit.score === 0 || audit.score === null)) {
-         bugs.push(audit.title); // e.g., "Browser errors were logged to the console"
+         bugs.push(audit.title); 
        }
     });
 
@@ -103,7 +113,7 @@ async function fetchPageSpeedData(rawUrl: string) {
       bugs
     };
   } catch (error) {
-    console.warn(`PSI fetch failed:`, error);
+    console.warn(`PSI All Attempts failed:`, error);
     return null;
   }
 }
@@ -119,7 +129,7 @@ export const performBrandAudit = async (
 
   if (apiKey) ai = new GoogleGenAI({ apiKey: apiKey });
 
-  // 1. EXECUTE DEEP CRAWL
+  // 1. EXECUTE DEEP CRAWL (Robust)
   const crawlData = await fetchPageSpeedData(brand.url);
   
   // 2. FORMAT QUIZ DATA
@@ -148,7 +158,7 @@ export const performBrandAudit = async (
     const stackLabel = crawlData.techStack.length > 0 ? crawlData.techStack.join(', ') : "Custom / Unknown";
     signals.push({
       label: "Tech Stack",
-      value: stackLabel.substring(0, 20), // Truncate if too long
+      value: stackLabel.substring(0, 20),
       status: 'good'
     });
 
@@ -161,7 +171,8 @@ export const performBrandAudit = async (
       });
     }
   } else {
-    signals.push({ label: "Site Scan", value: "Blocked / Failed", status: "critical" });
+    signals.push({ label: "Site Scan", value: "Connection Failed", status: "critical" });
+    signals.push({ label: "Manual Review", value: "Required", status: "warning" });
   }
 
   // 4. CONSTRUCT THE "FORENSIC" PROMPT
@@ -187,9 +198,9 @@ export const performBrandAudit = async (
 
     **PHASE 3: TECHNICAL & CONTENT ANALYSIS**
     **Real Crawl Data:**
-    - Mobile Speed: ${crawlData?.perfScore || 'Unknown'} / 100
-    - SEO Score: ${crawlData?.seoScore || 'Unknown'} / 100
-    - Detected Tech: ${crawlData?.techStack.join(', ') || 'Unknown'}
+    - Mobile Speed: ${crawlData?.perfScore ?? 'Unknown (Scan Failed)'} / 100
+    - SEO Score: ${crawlData?.seoScore ?? 'Unknown (Scan Failed)'} / 100
+    - Detected Tech: ${crawlData?.techStack?.join(', ') || 'Unknown'}
     - Detected Bugs: ${detectedBugs}
 
     **User Quiz Inputs:**
@@ -250,7 +261,7 @@ export const performBrandAudit = async (
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
-          temperature: 0.4, // Lower temperature for more analytical/factual output
+          temperature: 0.4, 
         }
       });
       
@@ -261,24 +272,23 @@ export const performBrandAudit = async (
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       const urls = chunks.map((c: any) => c.web?.uri).filter(Boolean);
 
-      // Final merge of signals (Ensure real technical data isn't overwritten by hallucinations)
-      // We prioritize the 'signals' array created from real PSI data, but allow AI to add 'Reputation' or 'Content' signals.
+      // Final merge of signals
       let finalSignals = [...signals];
       
       if (result.technicalSignals && Array.isArray(result.technicalSignals)) {
-        // Only add non-duplicate signals from AI (e.g., Reputation, Brand Age)
         result.technicalSignals.forEach((aiSig: any) => {
+          // Filter out hallucinations of tech scores we already have real data for
           const isTechDuplicate = finalSignals.some(fs => 
             fs.label.toLowerCase().includes('speed') || 
             fs.label.toLowerCase().includes('seo') || 
             fs.label.toLowerCase().includes('tech')
           );
-          // If it's not a technical metric we already have, add it
-          if (!isTechDuplicate || (!aiSig.label.toLowerCase().includes('speed') && !aiSig.label.toLowerCase().includes('seo'))) {
-             // Check strict duplicate label
-             if (!finalSignals.some(fs => fs.label === aiSig.label)) {
-                finalSignals.push(aiSig);
-             }
+          
+          const isGenericDuplicate = finalSignals.some(fs => fs.label.toLowerCase() === aiSig.label.toLowerCase());
+
+          // Only add if it's new information (like Reputation)
+          if (!isTechDuplicate && !isGenericDuplicate) {
+             finalSignals.push(aiSig);
           }
         });
       }
