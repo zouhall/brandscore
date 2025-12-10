@@ -198,23 +198,31 @@ export const performBrandAudit = async (
     - Mobile Speed: ${speedInput}
     - Tech Stack: ${techInput}
     
-    **TASK:**
-    1. If the "Mobile Speed" is "FAILED" or "Unknown", you **MUST** use 'google_search' to find "site:${domain}" and "${domain} technology".
-       - Infer if the site is modern/responsive.
-       - Identify the platform (Shopify, WordPress, Custom).
-       - **YOU MUST POPULATE the 'technicalSignals' array with at least 3 items.** 
-       - If you cannot find speed data, create a signal "Digital Presence" with value "Verified" or "Unverified".
-    
-    2. Search for the brand's social media and recent news to fill the "Business Context".
+    **CRITICAL TASK: IDENTIFY REVENUE MODEL**
+    1. **Do NOT classify this as a "Blog" or "Magazine"** just because they have articles. Content is often a marketing tool, not the business model.
+    2. **MANDATORY SEARCHES:** Use 'google_search' to run these specific queries:
+       - "site:${domain} shop" OR "site:${domain} store" (Check for E-commerce)
+       - "site:${domain} membership" OR "site:${domain} join" (Check for Club/Community)
+       - "site:${domain} services" OR "site:${domain} pricing" (Check for Agency/Consultancy)
+    3. **CLASSIFICATION RULES:**
+       - If they sell physical goods -> **E-commerce / Retail**.
+       - If they sell access -> **Membership Club**.
+       - If they sell expertise -> **Consultancy**.
+       - Only classify as "Magazine" if they have absolutely NO products or services for sale.
+       - **Example:** "The Old Fashioned Club" is likely a **Lifestyle Brand & Community**, NOT a blog.
+
+    **TECHNICAL FORENSICS:**
+    - If "Mobile Speed" is "FAILED", search for "site:${domain}" to confirm it is indexed.
+    - Search for "${domain} technology stack" to find if they use Shopify, WordPress, or Custom code.
 
     **QUESTIONNAIRE RESULTS:**
     ${formattedAnswers}
 
     **OUTPUT FORMAT (JSON ONLY):**
     {
-      "businessContext": "Industry and what they do. Be specific.",
+      "businessContext": "Specific Commercial Industry (e.g. 'Luxury Menswear & Lifestyle Community').",
       "momentumScore": [Integer 0-100],
-      "executiveSummary": "2-3 bold sentences diagnosing the main bottleneck.",
+      "executiveSummary": "2-3 bold sentences diagnosing the main bottleneck. Focus on how technical issues hurt REVENUE, not just 'readership'.",
       "technicalSignals": [ 
          { "label": "Mobile Experience", "value": "Modern/Fast", "status": "good" },
          { "label": "Tech Stack", "value": "Shopify", "status": "good" }
