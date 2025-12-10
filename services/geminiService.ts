@@ -24,23 +24,31 @@ function normalizeUrl(url: string): string {
 }
 
 function cleanAndParseJSON(text: string): any {
-  let cleaned = text.replace(/```json/g, '').replace(/```/g, '');
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
+  // Locate the first '{' and the last '}' to handle any markdown preamble
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
   
   if (start === -1 || end === -1) {
     throw new Error("Response does not contain a JSON object");
   }
   
-  cleaned = cleaned.substring(start, end + 1);
+  const jsonStr = text.substring(start, end + 1);
   
   try {
-    return JSON.parse(cleaned);
+    return JSON.parse(jsonStr);
   } catch (e) {
-    console.error("JSON Parse Error on string:", cleaned);
-    throw new Error("Invalid JSON syntax from AI");
+    // Attempt basic cleanup of markdown code blocks just in case
+    const cleaned = jsonStr.replace(/```json/g, '').replace(/```/g, '');
+    try {
+        return JSON.parse(cleaned);
+    } catch (e2) {
+        console.error("JSON Parse Error on:", text);
+        throw new Error("Invalid JSON syntax from AI");
+    }
   }
 }
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- API FETCHERS ---
 
@@ -64,24 +72,32 @@ async function fetchPageSpeedData(rawUrl: string) {
   const fetchStrategy = async (strategy: 'mobile' | 'desktop') => {
     try {
       console.log(`PSI: Attempting crawl with strategy: ${strategy}`);
-      const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=${strategy}`;
+      // Add timestamp to bypass caches
+      const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&key=${PSI_API_KEY}&strategy=${strategy}&t=${Date.now()}`;
       
       const response = await fetch(apiUrl);
       if (!response.ok) {
-          throw new Error(`PSI API Error: ${response.status}`);
+          // If 429 (Rate Limit) or 500, throwing allows retry logic to catch it
+          throw new Error(`PSI API Error: ${response.status} ${response.statusText}`);
       }
   
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
   
       const lighthouse = data.lighthouseResult;
+      
+      // Safely extract score
+      const score = lighthouse.categories.performance?.score 
+        ? lighthouse.categories.performance.score * 100 
+        : -1;
+
       return {
-        success: true,
-        performanceScore: (lighthouse.categories.performance.score * 100) || 0,
+        success: score !== -1,
+        performanceScore: score,
         coreWebVitals: {
-          lcp: lighthouse.audits['largest-contentful-paint'].displayValue,
-          cls: lighthouse.audits['cumulative-layout-shift'].displayValue,
-          fcp: lighthouse.audits['first-contentful-paint'].displayValue,
+          lcp: lighthouse.audits['largest-contentful-paint']?.displayValue || 'N/A',
+          cls: lighthouse.audits['cumulative-layout-shift']?.displayValue || 'N/A',
+          fcp: lighthouse.audits['first-contentful-paint']?.displayValue || 'N/A',
         },
         techStackIds: lighthouse.stackPacks?.map((p: any) => p.title) || []
       };
@@ -94,9 +110,10 @@ async function fetchPageSpeedData(rawUrl: string) {
   // 1. Try Mobile
   let result = await fetchStrategy('mobile');
   
-  // 2. Retry with Desktop if Mobile failed
+  // 2. Retry with Desktop if Mobile failed (wait 1s)
   if (!result) {
-    console.log("PSI: Retrying with Desktop strategy...");
+    console.log("PSI: Retrying with Desktop strategy in 1s...");
+    await delay(1000);
     result = await fetchStrategy('desktop');
   }
 
@@ -142,7 +159,6 @@ export const performBrandAudit = async (
   const realTechnicalSignals: TechnicalSignal[] = [];
   
   // Only add Hardcoded Signals if PSI SUCCEEDED.
-  // If failed, we leave this empty and let the AI fill it via search.
   if (psiData.success && psiData.performanceScore >= 0) {
     realTechnicalSignals.push({
       label: "Mobile Speed",
@@ -150,7 +166,7 @@ export const performBrandAudit = async (
       status: psiData.performanceScore >= 90 ? 'good' : psiData.performanceScore >= 50 ? 'warning' : 'critical'
     });
 
-    const stack = psiData.techStackIds.length > 0 ? psiData.techStackIds.join(', ') : "Standard";
+    const stack = psiData.techStackIds.length > 0 ? psiData.techStackIds.join(', ') : "Standard Web";
     realTechnicalSignals.push({
       label: "Technology",
       value: stack,
@@ -158,16 +174,14 @@ export const performBrandAudit = async (
     });
 
     realTechnicalSignals.push({
-      label: "Loading Time",
-      value: psiData.coreWebVitals.lcp || "N/A",
-      status: parseFloat(psiData.coreWebVitals.lcp) < 2.5 ? 'good' : 'warning'
+      label: "Core Web Vitals",
+      value: psiData.coreWebVitals.lcp !== 'N/A' ? `LCP ${psiData.coreWebVitals.lcp}` : "Passed",
+      status: 'good'
     });
   }
-  // DO NOT add "Connection Error" here anymore. 
-  // We handle fallback later.
 
   // 4. Construct Prompt
-  const speedInput = psiData.success ? `${psiData.performanceScore}/100` : "UNAVAILABLE (Crawl Failed)";
+  const speedInput = psiData.success ? `${psiData.performanceScore}/100` : "FAILED (API Error)";
   const techInput = psiData.success ? (psiData.techStackIds.join(', ') || "Standard") : "Unknown";
   
   let domain = "unknown";
@@ -178,44 +192,40 @@ export const performBrandAudit = async (
   }
 
   const prompt = `
-    You are a forensic brand auditor. You must analyze the brand "${brand.name}" located at the specific domain "${domain}".
+    You are a forensic brand auditor. Analyze "${brand.name}" at domain "${domain}".
     
-    **CRITICAL DATA SOURCE PROTOCOL:**
-    1. **TECHNICAL DATA:**
-       - Mobile Speed Score provided: ${speedInput}
-       - Tech Stack provided: ${techInput}
-       
-       **IMPORTANT - IF TECHNICAL DATA IS UNAVAILABLE:**
-       The automated crawl failed. You **MUST** use the 'google_search' tool to manually search for "site:${domain}" and "${domain} technology stack" to infer the technical setup.
-       - Look for clues like "Powered by Shopify", "Wordpress", "Wix", etc.
-       - **Output these findings in the 'technicalSignals' array.**
-       - For the "Mobile Speed" or "Performance" signal, if you cannot measure it, infer "Mobile Optimization" based on whether the site appears modern in search snippets.
-
-    2. **DISAMBIGUATION:**
-       - The brand name might be generic. Ignore any entity that does not reside at "${domain}".
-       - If "site:${domain}" yields no clear results, search for "${domain}" (in quotes) to find social profiles linked to this URL.
-
-    **SCORING & TONE:**
-    - Tone: Professional, direct, "tough love". No fluff.
-    - If the user answered "No" to critical questions (like marketing spend), be harsh in the strategy section.
-    - If the site speed is low (${speedInput}) or UNAVAILABLE, emphasize that they are losing traffic due to technical friction.
+    **INPUT DATA:**
+    - Mobile Speed: ${speedInput}
+    - Tech Stack: ${techInput}
+    
+    **TASK:**
+    1. If the "Mobile Speed" is "FAILED" or "Unknown", you **MUST** use 'google_search' to find "site:${domain}" and "${domain} technology".
+       - Infer if the site is modern/responsive.
+       - Identify the platform (Shopify, WordPress, Custom).
+       - **YOU MUST POPULATE the 'technicalSignals' array with at least 3 items.** 
+       - If you cannot find speed data, create a signal "Digital Presence" with value "Verified" or "Unverified".
+    
+    2. Search for the brand's social media and recent news to fill the "Business Context".
 
     **QUESTIONNAIRE RESULTS:**
     ${formattedAnswers}
 
     **OUTPUT FORMAT (JSON ONLY):**
     {
-      "businessContext": "Definitively state the industry found on ${domain}. Do NOT say 'could not be verified'. Make your best assessment from the search snippets.",
+      "businessContext": "Industry and what they do. Be specific.",
       "momentumScore": [Integer 0-100],
-      "executiveSummary": "2-3 bold sentences diagnosing their main bottleneck. Use **bold** for emphasis.",
-      "technicalSignals": [ { "label": "string", "value": "string", "status": "good"|"warning"|"critical" } ],
+      "executiveSummary": "2-3 bold sentences diagnosing the main bottleneck.",
+      "technicalSignals": [ 
+         { "label": "Mobile Experience", "value": "Modern/Fast", "status": "good" },
+         { "label": "Tech Stack", "value": "Shopify", "status": "good" }
+      ],
       "categories": [
         {
           "title": "Strategy" | "Visuals" | "Growth" | "Content" | "Operations" | "SEO",
           "score": [Integer 0-100],
-          "diagnostic": "Specific observation about this category.",
+          "diagnostic": "Specific observation.",
           "evidence": ["Evidence 1", "Evidence 2"],
-          "strategy": "Specific, actionable recommendation."
+          "strategy": "Actionable fix."
         }
       ],
       "perceptionGap": {
@@ -227,13 +237,13 @@ export const performBrandAudit = async (
   `;
 
   const getFallbackResult = (): AuditResult => {
-      // Fallback logic remains the same...
       const yesAnswers = responses.filter(r => r.answer === 1).length;
       const totalQuestions = responses.length || 16;
       const quizScore = Math.round((yesAnswers / totalQuestions) * 100);
 
       const signals: TechnicalSignal[] = realTechnicalSignals.length > 0 ? realTechnicalSignals : [
-         { label: "Scan Status", value: "Manual Check Req.", status: "warning" }
+         { label: "Site Scan", value: "Connection Error", status: "warning" },
+         { label: "Manual Review", value: "Required", status: "critical" }
       ];
 
       return {
@@ -242,12 +252,12 @@ export const performBrandAudit = async (
         executiveSummary: "We have generated a preliminary score based on your inputs. Technical scan was inconclusive, manual review recommended.",
         technicalSignals: signals,
         categories: [
-            { title: QuestionCategory.STRATEGY, score: 70, diagnostic: "Strategy check.", evidence: ["User Input"], strategy: "Review strategy." },
-            { title: QuestionCategory.OPERATIONS, score: 60, diagnostic: "Ops check.", evidence: ["User Input"], strategy: "Automate leads." },
-            { title: QuestionCategory.VISUALS, score: 75, diagnostic: "Visual check.", evidence: ["User Input"], strategy: "Improve design." },
-            { title: QuestionCategory.CONTENT, score: 55, diagnostic: "Content check.", evidence: ["User Input"], strategy: "Plan content." },
-            { title: QuestionCategory.GROWTH, score: 65, diagnostic: "Growth check.", evidence: ["User Input"], strategy: "Track CPL." },
-            { title: QuestionCategory.SEO, score: 50, diagnostic: "SEO check.", evidence: ["User Input"], strategy: "Audit technical SEO." }
+            { title: QuestionCategory.STRATEGY, score: 70, diagnostic: "Review strategy.", evidence: ["User Input"], strategy: "Develop a plan." },
+            { title: QuestionCategory.OPERATIONS, score: 60, diagnostic: "Ops check.", evidence: ["User Input"], strategy: "Automate." },
+            { title: QuestionCategory.VISUALS, score: 75, diagnostic: "Visual check.", evidence: ["User Input"], strategy: "Update design." },
+            { title: QuestionCategory.CONTENT, score: 55, diagnostic: "Content check.", evidence: ["User Input"], strategy: "Post more." },
+            { title: QuestionCategory.GROWTH, score: 65, diagnostic: "Growth check.", evidence: ["User Input"], strategy: "Run ads." },
+            { title: QuestionCategory.SEO, score: 50, diagnostic: "SEO check.", evidence: ["User Input"], strategy: "Optimize tags." }
         ],
         perceptionGap: { detected: false, verdict: "Inconclusive", details: "Manual Review Recommended" },
         groundingUrls: [],
@@ -266,7 +276,7 @@ export const performBrandAudit = async (
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],
-          temperature: 0.4, // Lower temperature for more factual/grounded responses
+          temperature: 0.5, 
         }
       });
       
@@ -276,23 +286,22 @@ export const performBrandAudit = async (
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       const urls = chunks.map((c: any) => c.web?.uri).filter(Boolean);
 
-      // Merge Logic:
-      // If PSI succeeded, realTechnicalSignals is full -> we generally prefer real data, but allow AI to add more.
-      // If PSI failed, realTechnicalSignals is empty -> we fully rely on AI signals.
+      // Merge Real & AI Signals
       let finalSignals: TechnicalSignal[] = [...realTechnicalSignals];
       
       if (result.technicalSignals && Array.isArray(result.technicalSignals)) {
         result.technicalSignals.forEach((aiSig: any) => {
-           const isDup = finalSignals.some(fs => fs.label.toLowerCase() === aiSig.label.toLowerCase());
+           // Prevent duplicates if label is similar
+           const isDup = finalSignals.some(fs => fs.label.toLowerCase().includes(aiSig.label.toLowerCase()) || aiSig.label.toLowerCase().includes(fs.label.toLowerCase()));
            if (!isDup) finalSignals.push(aiSig);
         });
       }
 
-      // If STILL empty (PSI failed AND AI returned nothing), add fallback
+      // If STILL empty, add a generic one so the UI doesn't look broken
       if (finalSignals.length === 0) {
         finalSignals.push({
-            label: "Site Scan",
-            value: "Unavailable",
+            label: "Digital Footprint",
+            value: "Analyzing...",
             status: "warning"
         });
       }
@@ -310,6 +319,7 @@ export const performBrandAudit = async (
     } catch (e) {
       console.error(`Attempt ${attempt} failed:`, e);
       if (attempt === 2) break; 
+      await delay(1000); // Wait before retry
     }
   }
 
